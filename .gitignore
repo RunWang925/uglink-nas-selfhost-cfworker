@@ -13,5 +13,6 @@ playwright-report/
 test-results/
 *.log
 data/
+node-gateway-data/
 .idea/
 *CLAUDE.md

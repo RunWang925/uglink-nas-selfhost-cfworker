@@ -74,6 +74,17 @@ docker compose up -d --no-build
 
 [Docker 镜像](https://github.com/Leonis-Q-F/uglink-worker-nas/pkgs/container/uglink-worker-nas)支持 `linux/amd64` 和 `linux/arm64`。配置保存在 `uglink-data` 卷中，重建容器不会删除该卷。
 
+### 或者：部署到你自己的服务器（免 Cloudflare）
+
+没有 Cloudflare 账户、或希望少一层第三方依赖时，可以把网关部署到自己的公网服务器：沿用绿联远程通道，**一个服务 = 服务器上一个端口**，通过 `http://服务器IP:端口` 访问，无需域名（域名可后期自行解析）。自带管理面板（配置、开关映射、流量统计与月度预警）。
+
+```bash
+docker compose -f compose.node.yaml up -d --build
+docker logs uglink-node-gateway   # 获取面板访问令牌
+```
+
+打开 `http://服务器IP:9090` 输入令牌即可配置。详见 [自托管服务器网关](docs/deployment.md#自托管服务器网关免-cloudflare)。
+
 > [!IMPORTANT]
 > 控制台默认监听所有网络接口，仅供可信局域网使用。远程访问应配置身份验证和 HTTPS。映射到公网的 NAS 应用也应保留自身认证，敏感服务建议配置 Cloudflare Access。
 
@@ -93,6 +104,7 @@ flowchart LR
 | --- | --- | --- |
 | 管理控制台 | 本地 Docker 或 Cloudflare | 配置、发布、备份与诊断 |
 | Gateway Worker | Cloudflare | 获取绿联代理会话，按域名转发请求 |
+| 自托管网关（可选） | 你的服务器 | 获取绿联代理会话，按端口转发请求，含流量统计 |
 
 本地控制台不承载 NAS 访问流量。发布完成后，Gateway 在 Cloudflare 上独立运行。
 

@@ -1,0 +1,27 @@
+# 自托管网关部署（免 Cloudflare）
+# 用法：docker compose -f compose.node.yaml up -d --build
+#
+# 说明：
+# - network_mode: host 直接使用宿主机网络，面板/网关端口无需逐一映射，
+#   新增端口映射后保存即可生效，不用改本文件。
+# - 首次启动后执行 `docker logs uglink-node-gateway` 获取管理面板访问令牌，
+#   打开 http://服务器IP:9090 输入令牌即可配置。
+# - 固定令牌：在 .env 中设置 ADMIN_TOKEN。
+
+services:
+  uglink-node-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.node-gateway
+    image: uglink-node-gateway:local
+    container_name: uglink-node-gateway
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      CONFIG_FILE: /data/config.json
+      TRAFFIC_FILE: /data/traffic.json
+      ADMIN_PORT: ${ADMIN_PORT:-9090}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      HOST: 0.0.0.0
+    volumes:
+      - ./node-gateway-data:/data

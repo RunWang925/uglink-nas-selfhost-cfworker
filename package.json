@@ -33,7 +33,9 @@
     "docker:up": "docker compose up --detach --build",
     "docker:down": "docker compose down",
     "secret:key": "node -e \"console.log(require('node:crypto').randomBytes(32).toString('base64url'))\"",
-    "start:console": "node dist/node-console/index.mjs"
+    "start:console": "node dist/node-console/index.mjs",
+    "build:node-gateway": "node scripts/build-node-gateway.mjs",
+    "start:node-gateway": "node dist/node-gateway/index.mjs"
   },
   "dependencies": {
     "jsencrypt": "^3.5.4",

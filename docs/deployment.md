@@ -290,6 +290,67 @@ npm run deploy:console
 
 返回 [项目首页](../README.md)。
 
+## 自托管服务器网关（免 Cloudflare）
+
+除了 Cloudflare Worker 网关，本项目还提供一个自托管网关：运行在你自己的公网服务器上，沿用绿联 UGREENlink 远程通道（登录与中继不变），但不依赖 Cloudflare。适合没有 Cloudflare 账户、或希望减少一层第三方依赖的用户。
+
+```mermaid
+flowchart LR
+    A[浏览器] --> S[自托管网关<br/>你的服务器]
+    S --> C[绿联 UGREENlink 远程通道]
+    C --> D[NAS Web 服务]
+    P[管理面板 :9090] -.配置.-> S
+```
+
+工作方式：**一个服务 = 服务器上一个端口**。在管理面板里为每个 NAS 服务填一条映射（NAS 端口 ↔ 服务器端口），保存后立即生效，通过 `http://服务器IP:端口` 访问。不需要域名（域名可后期自行解析到服务器 IP 后直接使用），也不需要在路由器上开端口。
+
+### 部署步骤
+
+1. 服务器上放好本项目文件，执行：
+
+   ```bash
+   docker compose -f compose.node.yaml up -d --build
+   ```
+
+   网关容器使用宿主机网络（`network_mode: host`），新增端口映射无需改 compose 或重启容器。
+
+2. 获取管理面板访问令牌（未设置 `ADMIN_TOKEN` 时会自动生成）：
+
+   ```bash
+   docker logs uglink-node-gateway | grep admin_token_generated
+   ```
+
+3. 打开 `http://服务器IP:9090`，输入令牌，依次填写：
+   - 连接设置：UGREENlink ID、NAS 本地登录用户名和密码；
+   - 端口映射：名称、NAS 端口（Docker 服务端口）、服务器端口；
+   - 保存并生效。
+
+4. 在服务器防火墙/安全组放行对应的服务端口（和面板端口 9090）。
+
+### 环境变量
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `CONFIG_FILE` | 无 | 配置文件路径（必填，面板模式依赖此文件） |
+| `TRAFFIC_FILE` | 无 | 流量统计持久化文件路径 |
+| `ADMIN_PORT` | `9090` | 管理面板端口 |
+| `ADMIN_TOKEN` | 自动生成 | 面板访问令牌；建议生产环境固定设置 |
+| `HOST` | `0.0.0.0` | 监听地址 |
+
+不设置 `CONFIG_FILE` 时可纯环境变量运行（`UGLINK_ID` / `USERNAME` / `PASSWORD` / `SERVICE_MAP`），此时面板关闭；`SERVICE_MAP` 条目带 `listen` 字段即进入"一服务一端口"模式，否则按 Host 路由（同 Cloudflare Worker 行为）。
+
+### 流量统计与预警
+
+面板实时显示本月流量（按服务分列）、历史累计与统计周期，字节数为近似值（请求/响应头按固定值估算，正文按实际流过字节计）。月度计数按 UTC 月份自动重置，历史累计持续累加，数据定期写入 `TRAFFIC_FILE`，重启不丢失。
+
+在面板中设置**月流量预警阈值（GB）**后，一旦当月流量超过阈值，面板显示警告横幅，日志输出 `traffic_threshold_exceeded` 事件。
+
+### 安全边界
+
+- 面板与网关默认均为 **HTTP 明文**，NAS 密码保存在服务器配置文件中（面板不回显密码）。请务必设置 `ADMIN_TOKEN`，并考虑用防火墙限制面板端口来源。
+- 通过网关访问的 NAS 服务建议保留自身登录认证；无域名模式下的明文 HTTP 传输适合内网工具类服务，敏感服务建议后期配置域名 + HTTPS 反代。
+- 网关是完整反向代理：**所有访问流量都经过服务器**，流量统计功能可用于确认实际消耗。
+
 ## 多入口与反向代理来源配置
 
 Docker 控制台默认自动适配局域网 HTTP 与 HTTPS 反向代理入口，不依赖厂商品牌或固定域名。保持原 YAML，更新镜像、重新部署并刷新页面即可；不需要新增环境变量。即使代理改写 Host、缺少 Forwarded/X-Forwarded-*，也可以通过控制台页面访问。代理需正常转发应用自定义请求头和 Cookie，不改写浏览器 Origin。

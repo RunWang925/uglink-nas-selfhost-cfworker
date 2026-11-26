@@ -2,6 +2,7 @@ import { proxyFailureCode } from '../../domain/proxy/errors';
 import {
   parseServiceMap,
   requestHostname,
+  resolveServiceRoute,
   type ServiceRoute
 } from '../../domain/proxy/routing';
 import type {
@@ -218,7 +219,7 @@ export async function handleGatewayRequest(
   }
 
   const hostname = requestHostname(request);
-  const route = services.get(hostname);
+  const route = resolveServiceRoute(services, hostname);
   const setupMode = runtime.setupMode || services.size === 0;
   const pathname = new URL(request.url).pathname;
 

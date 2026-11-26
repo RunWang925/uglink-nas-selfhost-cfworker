@@ -61,6 +61,18 @@ export function parseServiceMap(rawServiceMap: string): Map<string, ServiceRoute
   return services;
 }
 
+/**
+ * Exact hostname match first, then the '*' wildcard entry. The self-hosted
+ * Node gateway registers a single wildcard route per listen port so any
+ * Host header (domain or raw server IP) reaches the mapped NAS port.
+ */
+export function resolveServiceRoute(
+  services: Map<string, ServiceRoute>,
+  hostname: string
+): ServiceRoute | undefined {
+  return services.get(hostname) ?? services.get('*');
+}
+
 export function requestHostname(request: Request): string {
   return normalizeHostname(new URL(request.url).hostname);
 }
