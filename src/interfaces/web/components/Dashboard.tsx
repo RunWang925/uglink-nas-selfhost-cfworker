@@ -16,6 +16,7 @@ import {
   Plus,
   RefreshCw,
   Rocket,
+  Route,
   ServerCog,
   ShieldCheck,
   Trash2,
@@ -77,11 +78,11 @@ interface CloudConfigurationDialogProps {
   onDismiss: () => void;
 }
 
-const SECTION_COPY: Record<Section, { label: string; description: string }> = {
-  services: { label: '服务配置', description: '管理 NAS 连接与访问域名' },
-  server: { label: '服务器网关', description: '管理自托管服务器上的网关与流量' },
-  diagnostics: { label: '故障诊断', description: '查看容器运行输出、网络日志与操作记录' },
-  security: { label: '权限与安全', description: '管理 API Token 与数据安全' }
+const SECTION_COPY: Record<Section, { label: string; description: string; group: 'cloudflare' | 'server' | 'common' }> = {
+  services: { label: '服务配置', description: 'Cloudflare 网关 · 管理访问域名与 NAS 端口映射', group: 'cloudflare' },
+  server: { label: '服务器网关', description: '自建服务器 · 管理端口映射、访问方式与流量', group: 'server' },
+  diagnostics: { label: '故障诊断', description: 'Cloudflare 网关 · 运行输出、网络日志与操作记录', group: 'cloudflare' },
+  security: { label: '权限与安全', description: '切换网关路线、管理凭据与数据安全', group: 'common' }
 };
 
 function errorMessage(error: unknown): string {
@@ -618,7 +619,9 @@ interface SecurityPageProps {
   bootstrap: BootstrapResponse;
   config: UglinkConfig;
   resetting: boolean;
+  switchingRoute: boolean;
   onReset: () => void;
+  onSwitchRoute: (mode: 'cloudflare' | 'server') => void;
   onRestored: (bootstrap: BootstrapResponse) => void;
 }
 
@@ -626,22 +629,61 @@ function SecurityPage({
   bootstrap,
   config,
   resetting,
+  switchingRoute,
   onReset,
+  onSwitchRoute,
   onRestored
 }: SecurityPageProps) {
+  const accessMode = bootstrap.accessMode;
+  const cfConnected = bootstrap.providers.cloudflare.state === 'connected';
   return (
     <div className="section-page">
       <div className="page-heading">
-        <div><p className="eyebrow">凭据管理</p><h1>权限与安全</h1><p>管理 Cloudflare 连接与加密备份。</p></div>
+        <div><p className="eyebrow">凭据与路线管理</p><h1>权限与安全</h1><p>切换网关路线、管理连接凭据与加密备份。</p></div>
       </div>
       <div className="security-grid">
         <section className="panel security-card">
+          <span className="security-card__icon security-card__icon--blue"><Route size={21} /></span>
+          <div>
+            <h2>网关路线</h2>
+            <p>当前使用 <strong>{accessMode === 'server' ? '自建服务器网关' : 'Cloudflare 网关'}</strong>。两种路线可随时切换，互不干扰。</p>
+          </div>
+          <div className="route-switch-row">
+            <button
+              className={`button ${accessMode === 'cloudflare' ? 'button--primary' : 'button--secondary'}`}
+              type="button"
+              disabled={switchingRoute || accessMode === 'cloudflare'}
+              onClick={() => onSwitchRoute('cloudflare')}
+            >
+              {switchingRoute ? <LoaderCircle className="spin" size={15} /> : <Cloud size={15} />} Cloudflare 网关
+            </button>
+            <button
+              className={`button ${accessMode === 'server' ? 'button--primary' : 'button--secondary'}`}
+              type="button"
+              disabled={switchingRoute || accessMode === 'server'}
+              onClick={() => onSwitchRoute('server')}
+            >
+              {switchingRoute ? <LoaderCircle className="spin" size={15} /> : <HardDrive size={15} />} 自建服务器网关
+            </button>
+          </div>
+          {accessMode === 'server' && !cfConnected && (
+            <p className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+              切换到 Cloudflare 后需要填写 Account ID 与 API Token；凭据只在服务端加密保存。
+            </p>
+          )}
+        </section>
+        <section className="panel security-card">
           <span className="security-card__icon security-card__icon--orange"><Cloud size={21} /></span>
-          <div><h2>Cloudflare 连接</h2><p>当前 Account ID 尾号 <strong>···{bootstrap.target?.accountIdSuffix}</strong>，用于发布服务并管理访问域名。</p></div>
+          <div>
+            <h2>Cloudflare 连接</h2>
+            <p>{cfConnected
+              ? <>当前 Account ID 尾号 <strong>···{bootstrap.target?.accountIdSuffix}</strong>，用于发布服务并管理访问域名。</>
+              : '当前未连接 Cloudflare，无需填写 Token 即可使用自建服务器网关。'}</p>
+          </div>
           <ProviderBadge status={bootstrap.providers.cloudflare} full />
           <div className="security-card__actions">
-            <button className="button button--secondary" type="button" disabled={resetting} onClick={onReset}>
-              {resetting ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />} 重新配置 API Token
+            <button className="button button--secondary" type="button" disabled={resetting || switchingRoute} onClick={onReset}>
+              {resetting ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />} {cfConnected ? '重新配置 API Token' : '连接 Cloudflare'}
             </button>
           </div>
         </section>
@@ -656,7 +698,9 @@ function SecurityPage({
 }
 
 export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
-  const target = bootstrap.target!;
+  const accessMode = bootstrap.accessMode;
+  const isServerMode = accessMode === 'server';
+  const target = bootstrap.target;
   const initialConfiguration = useMemo(() => {
     const deployed = bootstrap.configuration?.deployed || defaultConfig();
     return {
@@ -665,7 +709,7 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
     };
   }, [bootstrap.configuration]);
   const initialHasPublishedServices = initialConfiguration.deployed.services.some((service) => service.enabled !== false);
-  const [section, setSection] = useState<Section>('services');
+  const [section, setSection] = useState<Section>(isServerMode ? 'server' : 'services');
   const [config, setConfig] = useState<UglinkConfig>(() => initialConfiguration.config);
   const [savedConfig, setSavedConfig] = useState<UglinkConfig>(() => initialConfiguration.deployed);
   const [password, setPassword] = useState('');
@@ -687,6 +731,7 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
   const [focusedHostname, setFocusedHostname] = useState<string>();
   const [busy, setBusy] = useState<'validate' | 'deploy'>();
   const [resettingConnection, setResettingConnection] = useState(false);
+  const [switchingRoute, setSwitchingRoute] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string }>();
   const [cloudConfiguration, setCloudConfiguration] = useState(bootstrap.cloudConfiguration);
   const [cloudConfigurationBusy, setCloudConfigurationBusy] = useState<'import' | 'dismiss'>();
@@ -702,6 +747,7 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
   }, [section]);
 
   useEffect(() => {
+    if (isServerMode) return undefined;
     if (!autosaveReady.current) {
       autosaveReady.current = true;
       return undefined;
@@ -756,6 +802,7 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
   }, [bootstrap.csrfToken, loadDiagnostics]);
 
   useEffect(() => {
+    if (isServerMode) return;
     if (skipNextPublishedHealthCheck.current) {
       skipNextPublishedHealthCheck.current = false;
       setCheckingHealth(false);
@@ -766,7 +813,7 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
       return;
     }
     void checkServices(savedConfig);
-  }, [checkServices, hasPublishedServices, savedConfig]);
+  }, [checkServices, hasPublishedServices, savedConfig, isServerMode]);
 
   useEffect(() => {
     if (section === 'diagnostics') void loadDiagnostics();
@@ -928,6 +975,23 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
     }
   };
 
+  const switchRoute = async (mode: 'cloudflare' | 'server') => {
+    if (mode === accessMode || switchingRoute) return;
+    if (mode === 'cloudflare' && !target) {
+      const confirmed = window.confirm('切换到 Cloudflare 网关需要填写 Account ID 与 API Token，是否继续？');
+      if (!confirmed) return;
+    }
+    setSwitchingRoute(true);
+    setNotice(undefined);
+    try {
+      await apiPost<BootstrapResponse>('/api/connections/mode', bootstrap.csrfToken, { accessMode: mode });
+      onConnectionReset();
+    } catch (error) {
+      setNotice({ type: 'error', message: errorMessage(error) });
+      setSwitchingRoute(false);
+    }
+  };
+
   const importCloudConfiguration = async () => {
     setCloudConfigurationBusy('import');
     setCloudConfigurationError(undefined);
@@ -964,12 +1028,17 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
     }
   };
 
-  const navItems: Array<{ id: Section; icon: typeof ServerCog }> = [
+  const allNavItems: Array<{ id: Section; icon: typeof ServerCog }> = [
     { id: 'services', icon: ServerCog },
     { id: 'server', icon: HardDrive },
     { id: 'diagnostics', icon: TriangleAlert },
     { id: 'security', icon: ShieldCheck }
   ];
+  // In server-only mode hide the Cloudflare-dependent panels so a self-hosted
+  // user never sees empty/broken CF screens. Server + Security always remain.
+  const navItems = isServerMode
+    ? allNavItems.filter((item) => item.id === 'server' || item.id === 'security')
+    : allNavItems;
   const currentErrorCount = (publishedHealth?.services.filter((service) => !service.healthy).length || 0)
     + (healthCheckError ? 1 : 0);
 
@@ -978,7 +1047,9 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
       <header className="app-header">
         <Brand compact />
         <div className="app-header__context">
-          <span>{target.accountName}</span><ChevronRight size={14} /><strong>{target.workerName}</strong>
+          {target
+            ? <><span>{target.accountName}</span><ChevronRight size={14} /><strong>{target.workerName}</strong></>
+            : <><span>自建路线</span><ChevronRight size={14} /><strong>服务器网关</strong></>}
         </div>
         <div className="app-header__providers">
           <ProviderBadge status={bootstrap.providers.cloudflare} />
@@ -1006,9 +1077,10 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
             ))}
           </nav>
           <div className="sidebar-target">
-            <p className="eyebrow">发布目标</p>
-            <div><span className="health-dot health-dot--ok" /><strong>{target.workerName}</strong></div>
-            <small>Account ID ···{target.accountIdSuffix}</small>
+            <p className="eyebrow">{target ? '发布目标' : '当前路线'}</p>
+            {target
+              ? <><div><span className="health-dot health-dot--ok" /><strong>{target.workerName}</strong></div><small>Account ID ···{target.accountIdSuffix}</small></>
+              : <><div><span className="health-dot health-dot--ok" /><strong>自建服务器网关</strong></div><small>IP:端口直连 · 无需域名</small></>}
           </div>
         </aside>
 
@@ -1069,7 +1141,9 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
               bootstrap={bootstrap}
               config={config}
               resetting={resettingConnection}
+              switchingRoute={switchingRoute}
               onReset={() => void resetConnection()}
+              onSwitchRoute={(mode) => void switchRoute(mode)}
               onRestored={() => window.location.reload()}
             />
           ) : null}
@@ -1096,7 +1170,7 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
 
       {cloudConfiguration && (
         <CloudConfigurationDialog
-          workerName={target.workerName}
+          workerName={target?.workerName ?? 'uglink-worker'}
           serviceCount={cloudConfiguration.serviceCount}
           busy={cloudConfigurationBusy}
           error={cloudConfigurationError}

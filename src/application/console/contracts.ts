@@ -16,6 +16,8 @@ export interface PublicWorkerTarget extends WorkerTarget {
 export interface BootstrapResponse {
   title: string;
   authenticated: boolean;
+  /** Active access route: 'cloudflare' (CF Worker), 'server' (self-hosted gateway), or 'setup' (not chosen yet). */
+  accessMode: 'cloudflare' | 'server' | 'setup';
   csrfToken: string;
   providers: {
     cloudflare: ProviderStatus;

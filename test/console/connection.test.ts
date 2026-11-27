@@ -102,6 +102,19 @@ function cloudConfigurationRequest(path: 'import' | 'dismiss', cookie: string, c
   });
 }
 
+function modeRequest(cookie: string, csrfToken: string, accessMode: string): Request {
+  return new Request(`${ORIGIN}/api/connections/mode`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: cookie,
+      Origin: ORIGIN,
+      'X-CSRF-Token': csrfToken
+    },
+    body: JSON.stringify({ accessMode })
+  });
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -273,6 +286,69 @@ describe('Cloudflare API Token connection', () => {
     expect(response.status).toBe(200);
     expect(body.cloudConfiguration).toBeUndefined();
     expect(body.configuration?.deployed).toEqual(defaultConfig());
+  });
+
+  it('marks the connection route as cloudflare after a CF connect', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith(`/accounts/${ACCOUNT_ID}`)) return envelope({ id: ACCOUNT_ID, name: 'Test Account' });
+      if (url.endsWith(`/accounts/${ACCOUNT_ID}/workers/domains`)) return envelope([]);
+      if (url.includes(`/accounts/${ACCOUNT_ID}/storage/kv/namespaces`)) return envelope([]);
+      if (url.endsWith(`/accounts/${ACCOUNT_ID}/workers/scripts/uglink-test/settings`)) return envelope(null, 404);
+      throw new Error(`Unexpected fetch: ${url}`);
+    }));
+
+    const { env } = environment();
+    const initial = await openSession(env);
+    expect(initial.bootstrap.accessMode).toBe('setup');
+
+    const response = await worker.fetch(connectionRequest(initial.cookie, initial.bootstrap.csrfToken), env);
+    const body = await response.json() as BootstrapResponse;
+    expect(body.accessMode).toBe('cloudflare');
+  });
+
+  it('allows a server-only session to authenticate without any Cloudflare connection', async () => {
+    const { env } = environment();
+    const initial = await openSession(env);
+    expect(initial.bootstrap.authenticated).toBe(false);
+    expect(initial.bootstrap.accessMode).toBe('setup');
+
+    const response = await worker.fetch(modeRequest(initial.cookie, initial.bootstrap.csrfToken, 'server'), env);
+    const body = await response.json() as BootstrapResponse;
+    expect(response.status).toBe(200);
+    expect(body.authenticated).toBe(true);
+    expect(body.accessMode).toBe('server');
+    expect(body.target).toBeUndefined();
+    expect(body.providers.cloudflare.state).toBe('disconnected');
+
+    // The choice persists across subsequent bootstrap calls.
+    const again = await worker.fetch(new Request(`${ORIGIN}/api/bootstrap`, {
+      headers: { Cookie: initial.cookie }
+    }), env);
+    const persisted = await again.json() as BootstrapResponse;
+    expect(persisted.authenticated).toBe(true);
+    expect(persisted.accessMode).toBe('server');
+  });
+
+  it('switching back to cloudflare without a connection returns to the setup state', async () => {
+    const { env } = environment();
+    const initial = await openSession(env);
+    await worker.fetch(modeRequest(initial.cookie, initial.bootstrap.csrfToken, 'server'), env);
+    const switched = await worker.fetch(modeRequest(initial.cookie, initial.bootstrap.csrfToken, 'cloudflare'), env);
+    const body = await switched.json() as BootstrapResponse;
+
+    expect(switched.status).toBe(200);
+    expect(body.accessMode).toBe('cloudflare');
+    expect(body.authenticated).toBe(false);
+  });
+
+  it('rejects an unknown access route', async () => {
+    const { env } = environment();
+    const initial = await openSession(env);
+    const response = await worker.fetch(modeRequest(initial.cookie, initial.bootstrap.csrfToken, 'whatever'), env);
+    const body = await response.json() as { error: { code: string } };
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe('invalid_access_mode');
   });
 
   it('rejects a token that cannot access both Workers and Workers KV', async () => {

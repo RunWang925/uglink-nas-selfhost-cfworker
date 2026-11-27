@@ -28,6 +28,7 @@ import {
   assertCsrf,
   getOrCreateSession,
   saveSession,
+  type AccessMode,
   type SessionHandle
 } from '../../../infrastructure/persistence/console-session';
 import { createKvDeploymentJobRepository } from '../../../infrastructure/persistence/kv-deployment-job-repository';
@@ -70,6 +71,14 @@ function connectionProvider(env: ConsoleWorkerEnv) {
 async function bootstrap(env: ConsoleWorkerEnv, session: SessionHandle): Promise<BootstrapResponse> {
   const connection = session.data.cloudflare;
   const target = session.data.target;
+  const cloudflareReady = Boolean(connection && target);
+  // Sessions created before access routes existed may lack accessMode. Infer
+  // the route so returning users keep their previous behaviour.
+  const accessMode = session.data.accessMode
+    ?? (cloudflareReady ? 'cloudflare' : 'setup');
+  const authenticated = accessMode === 'server'
+    ? true
+    : accessMode === 'cloudflare' && cloudflareReady;
   const cloudflare = providerStatus(
     Boolean(connection),
     connection?.account.name,
@@ -82,7 +91,8 @@ async function bootstrap(env: ConsoleWorkerEnv, session: SessionHandle): Promise
     : undefined;
   return {
     title: env.CONSOLE_TITLE || 'UGLINK Control',
-    authenticated: Boolean(connection && target),
+    authenticated,
+    accessMode,
     csrfToken: session.data.csrfToken,
     providers: { cloudflare },
     ...(session.data.pendingCloudConfiguration ? {
@@ -125,6 +135,7 @@ async function connect(
   const result = await connectCloudflare(request, connectionProvider(env));
   session.data.cloudflare = result.connection;
   session.data.target = result.target;
+  session.data.accessMode = 'cloudflare';
   if (result.deployedConfiguration) {
     session.data.pendingCloudConfiguration = result.deployedConfiguration;
   } else {
@@ -145,6 +156,21 @@ async function route(request: Request, env: ConsoleWorkerEnv, session: SessionHa
     assertCsrf(request, session);
     const body = await readJson<CloudflareConnectionRequest>(request, 8_192);
     return json(await connect(env, session, body));
+  }
+
+  if (request.method === 'POST' && pathname === '/api/connections/mode') {
+    assertSameOrigin(request, context.externalOrigin);
+    assertCsrf(request, session);
+    const body = await readJson<{ accessMode?: string }>(request, 1_024);
+    if (body.accessMode !== 'cloudflare' && body.accessMode !== 'server') {
+      throw new ApplicationError(400, 'invalid_access_mode', '访问路线必须是 cloudflare 或 server。');
+    }
+    // Switching to server-only must not leave a stale CF target that would
+    // re-enable CF-dependent panels; switching to cloudflare without a live
+    // connection simply lands back on the connect screen.
+    session.data.accessMode = body.accessMode as AccessMode;
+    await saveSession(env, session);
+    return json(await bootstrap(env, session));
   }
 
   if (request.method === 'POST' && pathname === '/api/validate') {
@@ -291,6 +317,8 @@ async function route(request: Request, env: ConsoleWorkerEnv, session: SessionHa
     delete session.data.cloudflare;
     delete session.data.target;
     delete session.data.pendingCloudConfiguration;
+    // Returning to the connect screen requires no active route.
+    if (session.data.accessMode === 'cloudflare') delete session.data.accessMode;
     await saveSession(env, session);
     return json({ ok: true });
   }

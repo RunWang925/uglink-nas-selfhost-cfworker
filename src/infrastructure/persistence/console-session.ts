@@ -8,12 +8,17 @@ import { constantTimeEqual, openJson, randomToken, sealJson } from '../security/
 const COOKIE_NAME = 'uglink_console_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 
+export type AccessMode = 'cloudflare' | 'server';
+
 export interface SessionData {
-  version: 2;
+  /** 2 = legacy (pre access-routes), 3 = current. v2 sessions are migrated on read. */
+  version: 2 | 3;
   createdAt: number;
   expiresAt: number;
   csrfToken: string;
   externalOrigin?: string;
+  /** Selected access route. Absent on a fresh session until the user picks a route. */
+  accessMode?: AccessMode;
   cloudflare?: CloudflareConnection;
   target?: WorkerTarget;
   pendingCloudConfiguration?: UglinkConfig;
@@ -46,7 +51,7 @@ function parseCookies(request: Request): Map<string, string> {
 function newSession(): SessionData {
   const now = Date.now();
   return {
-    version: 2,
+    version: 3,
     createdAt: now,
     expiresAt: now + SESSION_TTL_SECONDS * 1000,
     csrfToken: randomToken(24)
@@ -80,16 +85,24 @@ export async function getOrCreateSession(request: Request, env: ConsoleSessionEn
           error: error instanceof Error ? error.message : String(error)
         }));
       }
-      if (data?.version === 2 && data.expiresAt > Date.now()) {
+      if ((data?.version === 2 || data?.version === 3) && data.expiresAt > Date.now()) {
         if (data.externalOrigin && data.externalOrigin !== options?.origin) {
           // A legacy host-wide cookie can belong to a different port/scheme.
           // Leave it intact and create an independent origin-scoped session.
           if (legacy) return createSession(env, cookieName, options);
           throw new ApplicationError(403, 'session_origin_mismatch', '当前会话属于其他访问入口，请使用原入口打开控制台。');
         }
+        // Migrate v2 sessions (created before access routes existed): an
+        // already-connected session belonged to the Cloudflare route.
+        let migrated = false;
+        if (data.version === 2) {
+          data.version = 3;
+          if (!data.accessMode && data.cloudflare && data.target) data.accessMode = 'cloudflare';
+          migrated = true;
+        }
         const handle = { id: candidate, data, cookieName, shouldSetCookie: legacy };
-        if (!data.externalOrigin && options?.bindOrigin) {
-          data.externalOrigin = options.origin;
+        if ((!data.externalOrigin && options?.bindOrigin) || migrated) {
+          if (!data.externalOrigin && options?.bindOrigin) data.externalOrigin = options.origin;
           await saveSession(env, handle);
         }
         return handle;
