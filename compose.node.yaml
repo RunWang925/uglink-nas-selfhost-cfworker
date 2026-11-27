@@ -22,6 +22,8 @@ services:
       TRAFFIC_FILE: /data/traffic.json
       ADMIN_PORT: ${ADMIN_PORT:-9090}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      # 未设置时 9090 为只读状态屏；设置后可通过临时解锁在面板编辑。
+      UNLOCK_TOKEN: ${UNLOCK_TOKEN:-}
       HOST: 0.0.0.0
     volumes:
       - ./node-gateway-data:/data

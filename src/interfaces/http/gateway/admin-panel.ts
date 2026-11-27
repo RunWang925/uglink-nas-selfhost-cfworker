@@ -20,9 +20,13 @@ export interface AdminStatusService {
 export interface AdminPanelOptions {
   port: number;
   token: string;
+  /** When null the panel is a read-only status screen: PUT /api/config is rejected. */
+  unlockToken: string | null;
   getStored: () => NodeGatewayStoredConfig | null;
   applyConfig: (config: NodeGatewayStoredConfig) => { ok: true };
   getTraffic: () => TrafficSnapshot;
+  /** Live listener status so the panel can show which ports are serving. */
+  getServices?: () => AdminStatusService[];
   logger: {
     info(event: Record<string, unknown>): void;
     error(event: Record<string, unknown>): void;
@@ -104,6 +108,7 @@ const PANEL_HTML = `<!doctype html>
   .muted { color: #5b7190; font-size: 13px; }
   .warn { padding: 12px 14px; border-radius: 10px; background: #fff6e0; color: #854f0b; font-size: 14px; margin-bottom: 12px; }
   .stat { font-size: 20px; font-weight: 500; }
+  .stat-text { font-size: 15px; font-weight: 500; min-width: 120px; }
   .ok { color: #0f6e56; } .bad { color: #a32d2d; }
   #message { margin-top: 10px; font-size: 13px; min-height: 18px; }
   .error { color: #a32d2d; } .success { color: #0f6e56; }
@@ -111,20 +116,41 @@ const PANEL_HTML = `<!doctype html>
 </head>
 <body>
 <main>
-  <h1>UGLINK 自托管网关</h1>
+  <h1>UGLINK 自托管网关 <span class="muted" style="font-size:13px">— 状态屏</span></h1>
   <div id="warn"></div>
 
   <section>
-    <h2>连接设置</h2>
+    <h2>运行概览 <span class="muted">— 配置由 NAS 控制台同步，此处为只读</span></h2>
+    <div class="row">
+      <div><div class="muted">UGREENlink ID</div><div class="stat-text" id="roUglinkId">-</div></div>
+      <div><div class="muted">NAS 用户名</div><div class="stat-text" id="roUsername">-</div></div>
+      <div><div class="muted">月流量阈值</div><div class="stat-text" id="roThreshold">-</div></div>
+      <div><div class="muted">远程编辑</div><div class="stat-text" id="roEditState">-</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>端口映射（当前生效）</h2>
+    <table id="servicesRO">
+      <thead><tr><th>名称</th><th>NAS 端口 → 服务器端口</th><th>访问方式</th><th>状态</th></tr></thead>
+      <tbody id="roRows"></tbody>
+    </table>
+    <p class="muted" id="accessHintRO"></p>
+    <div class="row" style="margin-top:12px">
+      <button class="ghost" id="unlock">临时解锁编辑</button>
+      <span class="muted">紧急情况下可在此临时修改配置；日常请在 NAS 控制台操作。</span>
+    </div>
+    <div id="message"></div>
+  </section>
+
+  <section id="editSection" style="display:none">
+    <h2>编辑配置 <span class="muted">— 已临时解锁</span></h2>
     <label>UGREENlink ID</label><input id="uglinkId" placeholder="绿联远程访问 ID">
     <label>NAS 用户名</label><input id="username" autocomplete="off">
     <label>NAS 密码 <span class="muted">(留空表示不修改)</span></label><input id="password" type="password" autocomplete="new-password">
     <label>会话命名空间</label><input id="sessionNamespace" placeholder="default">
     <label>月流量预警阈值 (GB，留空不预警)</label><input id="threshold" placeholder="例如 100">
-  </section>
-
-  <section>
-    <h2>端口映射 <span class="muted">— 服务器端口 → NAS 端口</span></h2>
+    <h2 style="margin-top:16px">端口映射 <span class="muted">— 服务器端口 → NAS 端口</span></h2>
     <table id="services">
       <thead><tr><th>名称</th><th>NAS 端口</th><th>服务器端口</th><th>访问方式</th><th>状态</th><th></th></tr></thead>
       <tbody></tbody>
@@ -132,9 +158,9 @@ const PANEL_HTML = `<!doctype html>
     <div class="row" style="margin-top:12px">
       <button class="ghost" id="add">添加映射</button>
       <button id="save">保存并生效</button>
+      <button class="danger" id="lock">重新锁定</button>
       <span class="muted" id="accessHint"></span>
     </div>
-    <div id="message"></div>
   </section>
 
   <section>
@@ -150,6 +176,7 @@ const PANEL_HTML = `<!doctype html>
 </main>
 <script>
   var TOKEN = localStorage.getItem('uglink_admin_token') || '';
+  var UNLOCK = sessionStorage.getItem('uglink_unlock_token') || '';
   var current = { services: [] };
 
   function fmt(bytes) {
@@ -162,6 +189,7 @@ const PANEL_HTML = `<!doctype html>
     return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
   function setToken(token) { TOKEN = token; localStorage.setItem('uglink_admin_token', token); }
+  function setUnlock(token) { UNLOCK = token; sessionStorage.setItem('uglink_unlock_token', token); }
   function msg(text, kind) {
     var el = document.getElementById('message');
     el.textContent = text;
@@ -172,6 +200,7 @@ const PANEL_HTML = `<!doctype html>
     options = options || {};
     options.headers = Object.assign({ 'X-Admin-Token': TOKEN }, options.headers || {});
     if (options.body) options.headers['Content-Type'] = 'application/json';
+    if (options.method === 'PUT' && UNLOCK) options.headers['X-Admin-Unlock'] = UNLOCK;
     return fetch(path, options).then(function (response) {
       if (response.status === 401 && !retried) {
         var token = prompt('请输入管理面板访问令牌（首次运行可用 docker logs 查看）');
@@ -183,6 +212,45 @@ const PANEL_HTML = `<!doctype html>
         if (!response.ok) throw new Error(data.error || data.errors && data.errors.join(' ') || ('HTTP ' + response.status));
         return data;
       });
+    });
+  }
+
+  function modeLabel(mode) { return mode === 'ticket' ? '票据入口' : '直接代理'; }
+
+  function renderReadOnly(data) {
+    document.getElementById('roUglinkId').textContent = data.uglinkId || '-';
+    document.getElementById('roUsername').textContent = data.username || '-';
+    document.getElementById('roThreshold').textContent = data.trafficMonthlyThresholdGb == null ? '未设置' : data.trafficMonthlyThresholdGb + ' GB';
+    document.getElementById('roEditState').textContent = document.getElementById('editSection').style.display !== 'none'
+      ? '已临时解锁' : '只读';
+    document.getElementById('roEditState').className = 'stat-text ' + (document.getElementById('editSection').style.display !== 'none' ? '' : 'ok');
+    var tbody = document.getElementById('roRows');
+    tbody.innerHTML = (data.services || []).map(function (entry) {
+      return '<tr><td>' + esc(entry.name || '') + '</td>'
+        + '<td>' + esc(entry.nasPort || '') + ' → ' + esc(entry.serverPort || '') + '</td>'
+        + '<td>' + modeLabel(entry.accessMode) + '</td>'
+        + '<td class="pending" data-name="' + esc(entry.name || '') + '">…</td></tr>';
+    }).join('') || '<tr><td colspan="4" class="muted">暂无映射</td></tr>';
+    var ports = (data.services || []).map(function (s) { return s.serverPort; }).filter(Boolean);
+    document.getElementById('accessHintRO').textContent = ports.length
+      ? '可通过 http://服务器IP:' + ports.join(' 或 http://服务器IP:') + ' 访问'
+      : '';
+  }
+
+  function applyListening(status) {
+    var byName = {};
+    (status.services || []).forEach(function (item) { byName[item.name] = item; });
+    document.querySelectorAll('#servicesRO td.pending').forEach(function (cell) {
+      var match = byName[cell.getAttribute('data-name')];
+      cell.className = match && match.listening ? 'ok' : 'bad';
+      cell.textContent = match && match.listening ? '● 监听中' : '● 未监听';
+    });
+    document.querySelectorAll('#services tbody tr').forEach(function (tr) {
+      var name = tr.querySelector('.f-name').value.trim();
+      var cell = tr.cells[4];
+      var match = byName[name];
+      cell.className = match && match.listening ? 'ok' : 'bad';
+      cell.textContent = match && match.listening ? '● 监听中' : '● 未监听';
     });
   }
 
@@ -235,39 +303,57 @@ const PANEL_HTML = `<!doctype html>
     }
   }
 
-  function renderStatus(status) {
-    var byName = {};
-    (status.services || []).forEach(function (item) { byName[item.name] = item; });
+  function fillEditForm(data) {
+    document.getElementById('uglinkId').value = data.uglinkId || '';
+    document.getElementById('username').value = data.username || '';
+    document.getElementById('sessionNamespace').value = data.sessionNamespace || 'default';
+    document.getElementById('threshold').value = data.trafficMonthlyThresholdGb == null ? '' : data.trafficMonthlyThresholdGb;
     var tbody = document.querySelector('#services tbody');
-    var rows = Array.from(tbody.querySelectorAll('tr'));
-    rows.forEach(function (tr, index) {
-      var name = tr.querySelector('.f-name').value.trim();
-      var cell = tr.cells[4];
-      var match = byName[name];
-      cell.className = match && match.listening ? 'ok' : 'bad';
-      cell.textContent = match && match.listening ? '● 监听中' : '● 未监听';
-    });
+    tbody.innerHTML = '';
+    (data.services || []).forEach(function (entry) { tbody.appendChild(serviceRow(entry, null)); });
+    updateHint();
+  }
+
+  function enterEditMode() {
+    var token = prompt('请输入编辑解锁令牌（服务器 .env 中的 UNLOCK_TOKEN；未设置则此网关禁止远程编辑）');
+    if (token === null) return;
+    setUnlock(token);
+    fillEditForm(current);
+    document.getElementById('editSection').style.display = '';
+    document.getElementById('unlock').style.display = 'none';
+    renderReadOnly(current);
+    msg('已解锁：修改后点击“保存并生效”。', 'success');
+  }
+
+  function exitEditMode() {
+    setUnlock('');
+    document.getElementById('editSection').style.display = 'none';
+    document.getElementById('unlock').style.display = '';
+    document.getElementById('password').value = '';
+    renderReadOnly(current);
+    msg('已重新锁定。');
   }
 
   function load() {
     return api('/api/config').then(function (data) {
       current = data;
-      document.getElementById('uglinkId').value = data.uglinkId || '';
-      document.getElementById('username').value = data.username || '';
-      document.getElementById('sessionNamespace').value = data.sessionNamespace || 'default';
-      document.getElementById('threshold').value = data.trafficMonthlyThresholdGb == null ? '' : data.trafficMonthlyThresholdGb;
-      var tbody = document.querySelector('#services tbody');
-      tbody.innerHTML = '';
-      (data.services || []).forEach(function (entry) { tbody.appendChild(serviceRow(entry, null)); });
+      renderReadOnly(data);
+      if (UNLOCK) {
+        fillEditForm(data);
+        document.getElementById('editSection').style.display = '';
+        document.getElementById('unlock').style.display = 'none';
+        renderReadOnly(data);
+      }
       if (!data.configured) {
-        msg('尚未配置：请填写连接设置和端口映射后保存。');
+        msg('尚未配置：请在 NAS 控制台推送配置，或临时解锁编辑。');
       }
       renderTraffic(data.traffic);
-      updateHint();
-      return api('/api/status').then(renderStatus);
+      return api('/api/status').then(applyListening);
     }).catch(function (error) { msg('加载失败：' + error.message, 'error'); });
   }
 
+  document.getElementById('unlock').addEventListener('click', enterEditMode);
+  document.getElementById('lock').addEventListener('click', exitEditMode);
   document.getElementById('add').addEventListener('click', function () {
     document.querySelector('#services tbody').appendChild(serviceRow({}, null));
     updateHint();
@@ -282,16 +368,26 @@ const PANEL_HTML = `<!doctype html>
       services: readRows()
     };
     api('/api/config', { method: 'PUT', body: JSON.stringify(payload) }).then(function (data) {
+      current = data;
       document.getElementById('password').value = '';
       msg('已保存并生效。', 'success');
+      renderReadOnly(data);
       renderTraffic(data.traffic);
-      return api('/api/status').then(renderStatus);
-    }).catch(function (error) { msg('保存失败：' + error.message, 'error'); });
+      return api('/api/status').then(applyListening);
+    }).catch(function (error) {
+      if (error.message.indexOf('解锁') !== -1 || error.message.indexOf('只读') !== -1) {
+        setUnlock('');
+        document.getElementById('editSection').style.display = 'none';
+        document.getElementById('unlock').style.display = '';
+        renderReadOnly(current);
+      }
+      msg('保存失败：' + error.message, 'error');
+    });
   });
 
   load();
   setInterval(function () {
-    api('/api/status').then(function (data) { renderStatus(data); renderTraffic(data.traffic); }).catch(function () {});
+    api('/api/status').then(function (data) { applyListening(data); renderTraffic(data.traffic); }).catch(function () {});
   }, 10000);
 </script>
 </body>
@@ -325,10 +421,19 @@ export function createAdminServer(options: AdminPanelOptions): Server {
           return;
         }
         if (incoming.method === 'GET' && url.pathname === '/api/status') {
-          sendJson(outgoing, 200, { traffic: options.getTraffic() });
+          sendJson(outgoing, 200, { traffic: options.getTraffic(), services: options.getServices?.() ?? [] });
           return;
         }
         if (incoming.method === 'PUT' && url.pathname === '/api/config') {
+          if (!options.unlockToken) {
+            sendJson(outgoing, 403, { error: '此网关为只读状态屏：请在 NAS 控制台修改配置。' });
+            return;
+          }
+          const unlockHeader = incoming.headers['x-admin-unlock'];
+          if (typeof unlockHeader !== 'string' || unlockHeader !== options.unlockToken) {
+            sendJson(outgoing, 403, { error: '编辑解锁令牌缺失或不正确。' });
+            return;
+          }
           const body = await readBody(incoming);
           let parsed: unknown;
           try {

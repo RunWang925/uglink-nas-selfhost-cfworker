@@ -294,7 +294,79 @@ async function route(request: Request, env: ConsoleWorkerEnv, session: SessionHa
     await saveSession(env, session);
     return json({ ok: true });
   }
+
+  if (request.method === 'POST' && pathname.startsWith('/api/server-gateway/')) {
+    assertSameOrigin(request, context.externalOrigin);
+    assertCsrf(request, session);
+    const body = await readJson<ServerGatewayProxyRequest>(request, 262_144);
+    const action = pathname.slice('/api/server-gateway/'.length);
+    return json(await proxyServerGateway(action, body));
+  }
   throw new ApplicationError(404, 'not_found', '找不到这个 API。');
+}
+
+interface ServerGatewayProxyRequest {
+  baseUrl?: string;
+  adminToken?: string;
+  unlockToken?: string;
+  config?: Record<string, unknown>;
+}
+
+const SERVER_GATEWAY_ACTIONS = new Set(['pull', 'push', 'status']);
+
+async function proxyServerGateway(action: string, body: ServerGatewayProxyRequest): Promise<unknown> {
+  if (!SERVER_GATEWAY_ACTIONS.has(action)) {
+    throw new ApplicationError(404, 'not_found', '未知的网关操作。');
+  }
+  const base = (body.baseUrl ?? '').trim().replace(/\/+$/u, '');
+  if (!base || !/^https?:\/\/[^\s/]+(?::\d+)?$/iu.test(base)) {
+    throw new ApplicationError(400, 'invalid_base_url', '服务器地址必须是 http(s)://主机[:端口] 形式，且不含路径。');
+  }
+  if (!body.adminToken?.trim()) {
+    throw new ApplicationError(400, 'missing_token', '缺少服务器网关访问令牌。');
+  }
+  const headers: Record<string, string> = {
+    'X-Admin-Token': body.adminToken.trim(),
+    Accept: 'application/json'
+  };
+  let path = '/api/status';
+  let init: { method: 'GET' | 'PUT'; body?: string } = { method: 'GET' };
+  if (action === 'pull') {
+    path = '/api/config';
+  } else if (action === 'push') {
+    if (!body.unlockToken?.trim()) {
+      throw new ApplicationError(400, 'missing_unlock', '缺少服务器网关编辑解锁令牌。');
+    }
+    path = '/api/config';
+    // The gateway validates the full stored config, so merge the pushed
+    // services over the currently stored credentials instead of requiring
+    // the console to re-send them.
+    const currentResponse = await fetch(`${base}/api/config`, { headers, signal: AbortSignal.timeout(15_000) });
+    const currentConfig = await currentResponse.json().catch(() => ({}) as Record<string, unknown>);
+    const merged = { ...(currentConfig as Record<string, unknown>), ...(body.config ?? {}) };
+    delete (merged as Record<string, unknown>).traffic;
+    delete (merged as Record<string, unknown>).configured;
+    delete (merged as Record<string, unknown>).hasPassword;
+    init = { method: 'PUT', body: JSON.stringify(merged) };
+    headers['Content-Type'] = 'application/json';
+    headers['X-Admin-Unlock'] = body.unlockToken.trim();
+  }
+  let response: Response;
+  try {
+    response = await fetch(`${base}${path}`, { ...init, headers, signal: AbortSignal.timeout(15_000) });
+  } catch (error) {
+    throw new ApplicationError(502, 'server_gateway_unreachable',
+      `无法连接服务器网关：${error instanceof Error ? error.message : String(error)}`);
+  }
+  const payload = await response.json().catch(() => ({}) as Record<string, unknown>);
+  if (!response.ok) {
+    const detail = typeof (payload as { error?: unknown }).error === 'string'
+      ? (payload as { error: string }).error
+      : `HTTP ${response.status}`;
+    throw new ApplicationError(response.status === 401 || response.status === 403 ? 403 : 502,
+      'server_gateway_error', `服务器网关拒绝请求：${detail}`);
+  }
+  return payload;
 }
 
 export async function handleConsoleRequest(request: Request, env: ConsoleWorkerEnv, context: ExternalRequestContext): Promise<Response> {

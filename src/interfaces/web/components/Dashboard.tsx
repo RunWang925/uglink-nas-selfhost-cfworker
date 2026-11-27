@@ -10,6 +10,7 @@ import {
   EyeOff,
   ExternalLink,
   FileCheck2,
+  HardDrive,
   LoaderCircle,
   LockKeyhole,
   Plus,
@@ -50,11 +51,12 @@ import type {
 import { Brand } from './Brand';
 import { DiagnosticsPage } from './DiagnosticsPage';
 import { DataManagement } from './DataManagement';
+import { ServerGatewayPanel } from './ServerGatewayPanel';
 import { ProviderBadge } from './ProviderBadge';
 import { SelectMenu } from './SelectMenu';
 import { Toggle } from './Toggle';
 
-type Section = 'services' | 'diagnostics' | 'security';
+type Section = 'services' | 'server' | 'diagnostics' | 'security';
 
 const ACCESS_MODE_OPTIONS = [
   { value: 'proxy', label: '代理' },
@@ -77,6 +79,7 @@ interface CloudConfigurationDialogProps {
 
 const SECTION_COPY: Record<Section, { label: string; description: string }> = {
   services: { label: '服务配置', description: '管理 NAS 连接与访问域名' },
+  server: { label: '服务器网关', description: '管理自托管服务器上的网关与流量' },
   diagnostics: { label: '故障诊断', description: '查看容器运行输出、网络日志与操作记录' },
   security: { label: '权限与安全', description: '管理 API Token 与数据安全' }
 };
@@ -963,6 +966,7 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
 
   const navItems: Array<{ id: Section; icon: typeof ServerCog }> = [
     { id: 'services', icon: ServerCog },
+    { id: 'server', icon: HardDrive },
     { id: 'diagnostics', icon: TriangleAlert },
     { id: 'security', icon: ShieldCheck }
   ];
@@ -1040,6 +1044,8 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
               </div>
               <Inspector validation={visibleValidation} config={config} />
             </>
+          ) : section === 'server' ? (
+            <ServerGatewayPanel csrfToken={bootstrap.csrfToken} />
           ) : section === 'diagnostics' ? (
             <DiagnosticsPage
               csrfToken={bootstrap.csrfToken}

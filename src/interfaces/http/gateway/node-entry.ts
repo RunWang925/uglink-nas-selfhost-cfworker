@@ -10,7 +10,7 @@ import {
 import { ugreenProxyTransport } from '../../../infrastructure/ugreen/proxy-transport';
 import type { GatewayDependencies } from '../../../application/gateway/handle-request';
 import { createGatewayListeners, type GatewayListener } from './node-server';
-import { createAdminServer } from './admin-panel';
+import { createAdminServer, type AdminStatusService } from './admin-panel';
 import {
   configFromEnv,
   configFromStored,
@@ -66,6 +66,14 @@ function main(): void {
   stats.startAutoFlush();
 
   let listeners: GatewayListener[] = [];
+  let listenerServices: NodeGatewayStoredConfig['services'] = [];
+  const currentServicesStatus = (): AdminStatusService[] => listenerServices.map((service) => ({
+    name: service.name,
+    nasPort: Number(service.nasPort),
+    serverPort: Number(service.serverPort),
+    accessMode: service.accessMode ?? 'proxy',
+    listening: listeners.find((listener) => listener.service === service.name)?.server.listening ?? false
+  }));
   const stopAll = (): void => {
     for (const listener of listeners) {
       try {
@@ -94,6 +102,7 @@ function main(): void {
       ? Math.round(next.trafficMonthlyThresholdGb * 1_073_741_824)
       : null);
     stopAll();
+    listenerServices = next.services;
     try {
       listeners = createGatewayListeners(configFromStored(next, host), dependencies, stats);
     } catch (error) {
@@ -158,10 +167,15 @@ function main(): void {
       hint: 'Open the admin panel and enter this token, or set ADMIN_TOKEN to fix it'
     });
   }
+  // Remote editing is opt-in: without UNLOCK_TOKEN the panel stays a read-only
+  // status screen and configuration changes must come from the NAS console.
+  const unlockToken = process.env.UNLOCK_TOKEN?.trim() || null;
+  logger.info({ event: 'admin_edit_mode', remoteEditEnabled: unlockToken !== null });
 
   const adminServer = createAdminServer({
     port: adminPort,
     token: adminToken,
+    unlockToken,
     getStored: () => stored,
     applyConfig: (next) => {
       stored = next;
@@ -170,6 +184,7 @@ function main(): void {
       return { ok: true };
     },
     getTraffic: () => stats.snapshot(),
+    getServices: currentServicesStatus,
     logger
   });
   adminServer.on('error', (error: NodeJS.ErrnoException) => {
