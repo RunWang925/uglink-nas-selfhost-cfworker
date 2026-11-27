@@ -6,6 +6,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: uglink-console
     init: true
     restart: unless-stopped
     environment:

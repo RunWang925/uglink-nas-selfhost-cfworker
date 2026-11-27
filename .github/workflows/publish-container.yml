@@ -1,4 +1,4 @@
-name: Publish container image
+name: 构建 SELFHOST 镜像（NAS 控制台 + 服务器网关）
 
 on:
   push:

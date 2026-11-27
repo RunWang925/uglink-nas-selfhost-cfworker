@@ -80,7 +80,7 @@ docker compose up -d --no-build
 
 ```bash
 docker compose -f compose.node.yaml up -d --build
-docker logs uglink-node-gateway   # 获取面板访问令牌
+docker logs uglink-gateway-server   # 获取面板访问令牌
 ```
 
 打开 `http://服务器IP:9090` 输入令牌即可配置。详见 [自托管服务器网关](docs/deployment.md#自托管服务器网关免-cloudflare)。

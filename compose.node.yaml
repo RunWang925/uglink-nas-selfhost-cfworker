@@ -4,17 +4,17 @@
 # 说明：
 # - network_mode: host 直接使用宿主机网络，面板/网关端口无需逐一映射，
 #   新增端口映射后保存即可生效，不用改本文件。
-# - 首次启动后执行 `docker logs uglink-node-gateway` 获取管理面板访问令牌，
+# - 首次启动后执行 `docker logs uglink-gateway-server` 获取管理面板访问令牌，
 #   打开 http://服务器IP:9090 输入令牌即可配置。
 # - 固定令牌：在 .env 中设置 ADMIN_TOKEN。
 
 services:
-  uglink-node-gateway:
+  uglink-gateway-server:
     build:
       context: .
       dockerfile: Dockerfile.node-gateway
-    image: uglink-node-gateway:local
-    container_name: uglink-node-gateway
+    image: uglink-gateway-server:local
+    container_name: uglink-gateway-server
     restart: unless-stopped
     network_mode: host
     environment:
@@ -26,4 +26,4 @@ services:
       UNLOCK_TOKEN: ${UNLOCK_TOKEN:-}
       HOST: 0.0.0.0
     volumes:
-      - ./node-gateway-data:/data
+      - ./gateway-server-data:/data
