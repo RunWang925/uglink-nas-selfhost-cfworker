@@ -14,11 +14,12 @@ import type {
 
 const HEALTH_PATH = '/.well-known/uglink-worker-health';
 const TICKET_PATH = '/__uglink/ticket';
+const TICKET_SCRIPT_PATH = '/__uglink/ticket.js';
 const REPLAY_SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const HTML_HEADERS = {
   'Cache-Control': 'no-store',
   'Content-Type': 'text/html; charset=utf-8',
-  'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://*.ug.link https://*.ugdocker.link; base-uri 'none'; frame-ancestors 'none'",
+  'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; form-action 'self' https://*.ug.link https://*.ugdocker.link; base-uri 'none'; frame-ancestors 'none'",
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'X-Content-Type-Options': 'nosniff'
 };
@@ -95,11 +96,12 @@ function ticketPage(request: Request, hostname: string, error?: string, status =
     <h1>打开 NAS 服务</h1>
     <p><strong>${escapeHtml(hostname)}</strong> 是票据入口。点击后会签发一次性登录链接，并跳转到绿联中继域名。</p>
     ${message}
-    <form method="post" action="${TICKET_PATH}">
+    <form method="post" action="${TICKET_PATH}" id="ticket-form">
       <button type="submit">打开服务</button>
     </form>
     <p class="hint">链接只对一次打开有效。刷新或重新访问服务时，请回到此页重新签发。</p>
   </main>
+  <script src="${TICKET_SCRIPT_PATH}" defer></script>
 </body>
 </html>`, status);
 }
@@ -235,6 +237,26 @@ export async function handleGatewayRequest(
   if (!route) return new Response('Service not configured for this hostname', { status: 404 });
 
   if (route.accessMode === 'ticket') {
+    if (pathname === TICKET_SCRIPT_PATH) {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD', 'Cache-Control': 'no-store' } });
+      }
+      return new Response(request.method === 'HEAD' ? null : [
+        '// Auto-submit the ticket form so visitors land directly on the relay.',
+        '// Error pages include a .error element and skip auto-submission.',
+        'if (!document.querySelector(".error")) {',
+        '  var form = document.getElementById("ticket-form");',
+        '  if (form) form.submit();',
+        '}'
+      ].join('\n'), {
+        status: 200,
+        headers: {
+          'Cache-Control': 'no-store',
+          'Content-Type': 'text/javascript; charset=utf-8',
+          'X-Content-Type-Options': 'nosniff'
+        }
+      });
+    }
     if (pathname === TICKET_PATH) {
       return ticketIssuanceResponse(request, hostname, route, dependencies);
     }
