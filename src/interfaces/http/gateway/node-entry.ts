@@ -4,6 +4,7 @@ import { MemoryTtlCache } from '../../../infrastructure/persistence/memory-ttl-c
 import { TrafficStats } from '../../../infrastructure/monitoring/traffic-stats';
 import {
   createUgreenSessionService,
+  createUgreenTicketReuseService,
   createUgreenTicketService,
   type UgreenSessionRuntime
 } from '../../../infrastructure/ugreen/session-service';
@@ -50,11 +51,15 @@ function main(): void {
     username: '',
     password: '',
     sessionNamespace: 'default',
-    cache
+    cache,
+    ticketThrottleSeconds: Number(process.env.UGLINK_TICKET_THROTTLE_SECONDS) > 0
+      ? Number(process.env.UGLINK_TICKET_THROTTLE_SECONDS)
+      : undefined
   };
   const dependencies: GatewayDependencies = {
     sessions: createUgreenSessionService(runtime),
     tickets: createUgreenTicketService(runtime),
+    ticketReuse: createUgreenTicketReuseService(runtime),
     transport: ugreenProxyTransport,
     logger
   };

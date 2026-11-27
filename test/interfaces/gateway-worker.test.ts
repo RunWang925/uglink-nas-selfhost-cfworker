@@ -3,7 +3,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
 import worker from '../../src/interfaces/http/gateway/worker';
 import type { GatewayWorkerEnv } from '../../src/interfaces/http/gateway/environment';
-import { cacheKeys, discoveryCacheKey } from '../../src/infrastructure/ugreen/session-service';
+import { authAttemptKey, cacheKeys, discoveryCacheKey } from '../../src/infrastructure/ugreen/session-service';
 
 function fakeKv(initialValues: Record<string, string>): {
   namespace: KVNamespace;
@@ -247,6 +247,53 @@ test('ticket mode issues a ticket only for an explicit same-origin POST', async 
   assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
   assert.equal(mocked.redirectCalls(), 0);
   assert.equal(values.has(keys.session), false);
+});
+
+test('ticket mode reuses the last ticket for the same visitor and force reissues on request', async (context) => {
+  const originalFetch = globalThis.fetch;
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  const { publicKey } = generateKeyPairSync('rsa', {
+    modulusLength: 1024,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+  });
+  const mocked = installTicketFetch(publicKey);
+  let fetchCalls = 0;
+  globalThis.fetch = async (...args: Parameters<typeof fetch>) => {
+    fetchCalls += 1;
+    return mocked.fetch(...args);
+  };
+  const { env, values } = ticketEnvironment();
+  const headers = { Origin: 'https://service.example.com' };
+
+  const first = await worker.fetch(new Request('https://service.example.com/__uglink/ticket', {
+    method: 'POST',
+    headers
+  }), env);
+  assert.equal(first.status, 303);
+  const cookie = first.headers.get('set-cookie')?.split(';')[0];
+  assert.match(cookie ?? '', /^uglink_v=/u);
+  const callsAfterFirst = fetchCalls;
+
+  const repeat = await worker.fetch(new Request('https://service.example.com/__uglink/ticket', {
+    method: 'POST',
+    headers: { ...headers, Cookie: cookie! }
+  }), env);
+  assert.equal(repeat.status, 303);
+  assert.equal(repeat.headers.get('location'), mocked.ticketUrl);
+  assert.equal(fetchCalls, callsAfterFirst, 'repeat visit must not contact UGREENlink again');
+
+  // Simulate the throttle window having elapsed, then force a fresh issuance.
+  values.delete(authAttemptKey('stable-client-id'));
+  const forced = await worker.fetch(new Request('https://service.example.com/__uglink/ticket?force=1', {
+    method: 'POST',
+    headers: { ...headers, Cookie: cookie! }
+  }), env);
+  assert.equal(forced.status, 303);
+  assert.equal(forced.headers.get('location'), mocked.ticketUrl);
+  assert.ok(fetchCalls > callsAfterFirst, 'force must issue a fresh ticket');
 });
 
 test('ticket mode does not issue a ticket from GET or a cross-origin POST', async (context) => {

@@ -24,6 +24,8 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       # 未设置时 9090 为只读状态屏；设置后可通过临时解锁在面板编辑。
       UNLOCK_TOKEN: ${UNLOCK_TOKEN:-}
+      # 票据签发节流窗口（秒），默认 300；同一设备 30 分钟内复用跳转不受此限制。
+      UGLINK_TICKET_THROTTLE_SECONDS: ${UGLINK_TICKET_THROTTLE_SECONDS:-}
       HOST: 0.0.0.0
     volumes:
       - ./gateway-server-data:/data

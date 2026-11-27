@@ -8,6 +8,7 @@ import {
 import type {
   GatewayLogger,
   ProxySessionService,
+  ProxyTicketReuseService,
   ProxyTicketService,
   ProxyTransport
 } from './ports';
@@ -15,6 +16,8 @@ import type {
 const HEALTH_PATH = '/.well-known/uglink-worker-health';
 const TICKET_PATH = '/__uglink/ticket';
 const TICKET_SCRIPT_PATH = '/__uglink/ticket.js';
+const VISITOR_COOKIE = 'uglink_v';
+const REUSE_TTL_DISPLAY = '30 分钟';
 const REPLAY_SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const HTML_HEADERS = {
   'Cache-Control': 'no-store',
@@ -44,6 +47,7 @@ export interface GatewayRuntime {
 export interface GatewayDependencies {
   sessions: ProxySessionService;
   tickets: ProxyTicketService;
+  ticketReuse: ProxyTicketReuseService;
   transport: ProxyTransport;
   logger: GatewayLogger;
 }
@@ -64,10 +68,46 @@ function htmlResponse(request: Request, html: string, status = 200): Response {
   });
 }
 
-function ticketPage(request: Request, hostname: string, error?: string, status = 200): Response {
+function readVisitorId(request: Request): string | null {
+  const cookie = request.headers.get('Cookie') ?? '';
+  const match = cookie.match(/(?:^|;\s*)uglink_v=([a-zA-Z0-9-]{8,64})/u);
+  return match?.[1] ?? null;
+}
+
+function visitorIdFor(request: Request): { id: string; isNew: boolean } {
+  const existing = readVisitorId(request);
+  return existing ? { id: existing, isNew: false } : { id: crypto.randomUUID(), isNew: true };
+}
+
+function visitorCookie(request: Request, visitorId: string): string {
+  const secure = new URL(request.url).protocol === 'https:' ? '; Secure' : '';
+  return `${VISITOR_COOKIE}=${visitorId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${secure}`;
+}
+
+function ticketRedirect(location: string, request: Request, visitorId: string): Response {
+  return new Response(null, {
+    status: 303,
+    headers: {
+      'Cache-Control': 'no-store',
+      Location: location,
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff',
+      'Set-Cookie': visitorCookie(request, visitorId)
+    }
+  });
+}
+
+function ticketPage(
+  request: Request,
+  hostname: string,
+  error?: string,
+  status = 200,
+  options: { force?: boolean } = {}
+): Response {
   const message = error
     ? `<p class="error" role="alert">${escapeHtml(error)}</p>`
     : '';
+  const action = options.force ? `${TICKET_PATH}?force=1` : TICKET_PATH;
   return htmlResponse(request, `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -96,10 +136,10 @@ function ticketPage(request: Request, hostname: string, error?: string, status =
     <h1>打开 NAS 服务</h1>
     <p><strong>${escapeHtml(hostname)}</strong> 是票据入口。点击后会签发一次性登录链接，并跳转到绿联中继域名。</p>
     ${message}
-    <form method="post" action="${TICKET_PATH}" id="ticket-form">
+    <form method="post" action="${action}" id="ticket-form">
       <button type="submit">打开服务</button>
     </form>
-    <p class="hint">链接只对一次打开有效。刷新或重新访问服务时，请回到此页重新签发。</p>
+    <p class="hint">同一设备 ${REUSE_TTL_DISPLAY} 内重复打开会直接复用跳转，无需重新登录；换设备或链接失效时点此<a href="/?force=1">强制重新签发</a>。</p>
   </main>
   <script src="${TICKET_SCRIPT_PATH}" defer></script>
 </body>
@@ -145,17 +185,19 @@ async function ticketIssuanceResponse(
     return response;
   }
 
+  const { id: visitorId } = visitorIdFor(request);
+  const force = new URL(request.url).searchParams.has('force');
   try {
-    const ticket = await dependencies.tickets.issue(route.port);
-    return new Response(null, {
-      status: 303,
-      headers: {
-        'Cache-Control': 'no-store',
-        Location: ticket.url,
-        'Referrer-Policy': 'no-referrer',
-        'X-Content-Type-Options': 'nosniff'
+    if (!force) {
+      const cached = await dependencies.ticketReuse.get(visitorId, route.port);
+      if (cached) {
+        dependencies.logger.info({ event: 'ticket_reused', hostname, port: route.port });
+        return ticketRedirect(cached, request, visitorId);
       }
-    });
+    }
+    const ticket = await dependencies.tickets.issue(route.port);
+    await dependencies.ticketReuse.put(visitorId, route.port, ticket.url);
+    return ticketRedirect(ticket.url, request, visitorId);
   } catch (error) {
     dependencies.logger.error({
       event: 'ticket_issue_failed',
@@ -163,7 +205,9 @@ async function ticketIssuanceResponse(
       port: route.port,
       error: error instanceof Error ? error.message : String(error)
     });
-    return ticketFailureResponse(request, hostname, error);
+    const response = ticketFailureResponse(request, hostname, error);
+    response.headers.set('Set-Cookie', visitorCookie(request, visitorId));
+    return response;
   }
 }
 
@@ -261,7 +305,8 @@ export async function handleGatewayRequest(
       return ticketIssuanceResponse(request, hostname, route, dependencies);
     }
     if (request.method === 'GET' || request.method === 'HEAD') {
-      return ticketPage(request, hostname);
+      const force = new URL(request.url).searchParams.has('force');
+      return ticketPage(request, hostname, undefined, 200, { force });
     }
     return new Response('Method not allowed', {
       status: 405,

@@ -2,6 +2,7 @@ import { handleGatewayRequest } from '../../../application/gateway/handle-reques
 import { ugreenProxyTransport } from '../../../infrastructure/ugreen/proxy-transport';
 import {
   createUgreenSessionService,
+  createUgreenTicketReuseService,
   createUgreenTicketService,
   type UgreenSessionRuntime
 } from '../../../infrastructure/ugreen/session-service';
@@ -27,16 +28,21 @@ export default {
         get: (key) => env.UGLINK_CACHE.get(key),
         put: (key, value, options) => env.UGLINK_CACHE.put(key, value, options),
         delete: (key) => env.UGLINK_CACHE.delete(key)
-      }
+      },
+      ticketThrottleSeconds: Number(env.UGLINK_TICKET_THROTTLE_SECONDS) > 0
+        ? Number(env.UGLINK_TICKET_THROTTLE_SECONDS)
+        : undefined
     };
     const sessions = createUgreenSessionService(runtime);
     const tickets = createUgreenTicketService(runtime);
+    const ticketReuse = createUgreenTicketReuseService(runtime);
     return handleGatewayRequest(request, {
       serviceMap: env.SERVICE_MAP,
       setupMode: env.SETUP_MODE === 'true'
     }, {
       sessions,
       tickets,
+      ticketReuse,
       transport: ugreenProxyTransport,
       logger
     });

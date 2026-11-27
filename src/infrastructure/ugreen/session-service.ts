@@ -5,7 +5,9 @@ import {
   ProxyAuthenticationError,
   type ProxyAuthenticationIssue
 } from '../../domain/proxy/errors';
-import type { ProxySessionService, ProxyTicketService } from '../../application/gateway/ports';
+import type { ProxySessionService, ProxyTicketReuseService, ProxyTicketService } from '../../application/gateway/ports';
+
+const TICKET_REUSE_TTL_SECONDS = 1800;
 
 const CACHE_TTL_SECONDS = 3600;
 const DISCOVERY_TTL_SECONDS = 300;
@@ -44,6 +46,8 @@ export interface UgreenSessionRuntime {
   password: string;
   sessionNamespace: string;
   cache: SessionCache;
+  /** Overrides the ticket-issuance throttle window (seconds). */
+  ticketThrottleSeconds?: number;
 }
 
 type LoginData =
@@ -495,7 +499,10 @@ async function reserveAuthenticationAttempt(runtime: UgreenSessionRuntime): Prom
   if (await runtime.cache.get(key)) throw new ProxyAuthenticationError('backoff');
 
   const attemptId = crypto.randomUUID();
-  await runtime.cache.put(key, attemptId, { expirationTtl: AUTH_ATTEMPT_TTL_SECONDS });
+  const ttl = runtime.ticketThrottleSeconds && runtime.ticketThrottleSeconds > 0
+    ? runtime.ticketThrottleSeconds
+    : AUTH_ATTEMPT_TTL_SECONDS;
+  await runtime.cache.put(key, attemptId, { expirationTtl: ttl });
   if (await runtime.cache.get(key) !== attemptId) {
     throw new ProxyAuthenticationError('backoff');
   }
@@ -1128,6 +1135,23 @@ export async function invalidateProxySession(runtime: UgreenSessionRuntime, port
 export async function refreshProxySession(runtime: UgreenSessionRuntime, port: string): Promise<ProxySession> {
   await invalidateProxySession(runtime, port);
   return createProxySession(runtime, port, true);
+}
+
+function ticketReuseKey(sessionNamespace: string, visitorId: string, port: string): string {
+  return `uglink:ticket-reuse:v1:${sessionNamespace}:${visitorId}:${port}`;
+}
+
+/** Remembers each visitor's last ticket redirect so repeat opens skip the login handshake. */
+export function createUgreenTicketReuseService(runtime: UgreenSessionRuntime): ProxyTicketReuseService {
+  return {
+    get: (visitorId, port) => runtime.cache.get(ticketReuseKey(runtime.sessionNamespace, visitorId, port)),
+    put: (visitorId, port, url) => runtime.cache.put(
+      ticketReuseKey(runtime.sessionNamespace, visitorId, port),
+      url,
+      { expirationTtl: TICKET_REUSE_TTL_SECONDS }
+    ),
+    clear: (visitorId, port) => runtime.cache.delete(ticketReuseKey(runtime.sessionNamespace, visitorId, port))
+  };
 }
 
 export function createUgreenSessionService(runtime: UgreenSessionRuntime): ProxySessionService {
