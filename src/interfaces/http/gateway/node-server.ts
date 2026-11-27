@@ -17,7 +17,11 @@ const BODY_TIMEOUT_MS = 30_000;
 function externalRequestUrl(incoming: IncomingMessage): string {
   const headers = incoming.headers;
   let host = headers.host ?? '';
-  let proto = 'https';
+  // This listener serves plain HTTP; only trust a reverse proxy's
+  // X-Forwarded-Proto header when it claims TLS. Defaulting to https broke
+  // same-origin checks (Origin vs request URL) for direct http://IP:port
+  // access, e.g. ticket issuance.
+  let proto = 'http';
 
   const forwardedHost = headers['x-forwarded-host'];
   if (typeof forwardedHost === 'string' && forwardedHost) {
