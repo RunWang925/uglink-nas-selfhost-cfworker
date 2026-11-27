@@ -85,13 +85,17 @@ export function buildProxyHeaders(request: Request, session: ProxySession): Head
 export async function proxyRequest(request: Request, session: ProxySession): Promise<Response> {
   const incomingUrl = new URL(request.url);
   const proxyUrl = `${session.origin}${incomingUrl.pathname}${incomingUrl.search}`;
+  const hasBody = request.method !== 'GET' && request.method !== 'HEAD' && Boolean(request.body);
 
   return fetch(proxyUrl, {
     method: request.method,
     headers: buildProxyHeaders(request, session),
-    body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
+    body: hasBody ? request.body : undefined,
+    // Node's undici requires duplex:'half' whenever a streaming request body
+    // is present; the Cloudflare Workers runtime accepts the option too.
+    ...(hasBody ? { duplex: 'half' } : {}),
     redirect: 'manual'
-  });
+  } as RequestInit);
 }
 
 export const ugreenProxyTransport: ProxyTransport = {

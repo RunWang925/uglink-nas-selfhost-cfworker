@@ -69,8 +69,16 @@ async function sendResponse(
   onBytes: (length: number) => void
 ): Promise<void> {
   outgoing.statusCode = response.status;
+  // Node (undici) transparently decodes gzip/br/deflate upstream bodies but
+  // keeps the content-encoding header on the Response. Forwarding it makes
+  // browsers try to decompress already-plain bytes -> blank pages. The
+  // decoded body also no longer matches content-length, so drop both when
+  // a streaming body follows (Node then re-chunks with correct framing).
+  const bodyFollows = Boolean(response.body) && !headOnly;
   response.headers.forEach((value, name) => {
-    if (name !== 'set-cookie') outgoing.setHeader(name, value);
+    if (name === 'set-cookie') return;
+    if (bodyFollows && (name === 'content-encoding' || name === 'content-length')) return;
+    outgoing.setHeader(name, value);
   });
   const cookies = response.headers.getSetCookie();
   if (cookies.length > 0) outgoing.setHeader('set-cookie', cookies);
