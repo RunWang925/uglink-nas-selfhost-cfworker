@@ -11,6 +11,36 @@ export class JSEncrypt {
   private key: ReturnType<typeof createPublicKey> | null = null;
 
   setPublicKey(encodedPublicKey: string): void {
+    const material = encodedPublicKey.trim();
+    if (material.includes('-----BEGIN')) {
+      // UGREEN's x-rsa-token decodes to a PEM whose body is SPKI but whose
+      // labels say "RSA PUBLIC KEY" (PKCS#1) — try as-is, then relabel.
+      try {
+        this.key = createPublicKey({ key: material });
+        return;
+      } catch {
+        // fall through to relabel / DER extraction below
+      }
+      const relabeled = material.replace(/RSA PUBLIC KEY/g, 'PUBLIC KEY');
+      try {
+        this.key = createPublicKey({ key: relabeled });
+        return;
+      } catch {
+        // fall through to DER extraction below
+      }
+      const body = material
+        .replace(/-----BEGIN [^-]+-----/, '')
+        .replace(/-----END [^-]+-----/, '')
+        .replace(/\s+/g, '');
+      const der = Buffer.from(body, 'base64');
+      try {
+        this.key = createPublicKey({ key: der, format: 'der', type: 'spki' });
+        return;
+      } catch {
+        this.key = createPublicKey({ key: der, format: 'der', type: 'pkcs1' });
+        return;
+      }
+    }
     const der = Buffer.from(encodedPublicKey, 'binary');
     try {
       this.key = createPublicKey({ key: der, format: 'der', type: 'spki' });
