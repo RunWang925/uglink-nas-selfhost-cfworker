@@ -3887,3 +3887,251 @@ select:focus {
 @media (prefers-reduced-motion: reduce) {
   .deployment-overlay .spin { animation: none; }
 }
+
+/* ---- Unified service list (service-first, nested A/B channels) ---- */
+.unified-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.unified-service {
+  border: 0.5px solid var(--border-tertiary, rgba(15, 23, 42, 0.15));
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--color-background-primary, #fff);
+}
+
+.unified-service--open {
+  border-color: rgba(24, 95, 165, 0.45);
+}
+
+.unified-service__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--color-background-secondary, #f6f7f9);
+}
+
+.unified-service__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-secondary, #55606e);
+  cursor: pointer;
+}
+
+.unified-service__toggle:hover {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.unified-service__name input {
+  min-width: 140px;
+}
+
+.unified-service__port {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.unified-service__port input {
+  width: 84px;
+}
+
+.unified-service__badges {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.unified-service__head .service-status {
+  margin-left: auto;
+}
+
+.route-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.route-badge--cf {
+  color: #0c447c;
+  background: #e6f1fb;
+  border: 0.5px solid #b5d4f4;
+}
+
+.route-badge--server {
+  color: #085041;
+  background: #e1f5ee;
+  border: 0.5px solid #9fe1cb;
+}
+
+.unified-service__body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.unified-channel {
+  border: 0.5px solid var(--border-tertiary, rgba(15, 23, 42, 0.15));
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.unified-channel--cf {
+  background: rgba(230, 241, 251, 0.45);
+}
+
+.unified-channel--server {
+  background: rgba(225, 245, 238, 0.45);
+}
+
+.unified-channel__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.unified-channel__head .service-status {
+  margin-left: auto;
+}
+
+.unified-channel__fields {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.unified-channel__fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #55606e);
+}
+
+.unified-channel__domain input {
+  min-width: 220px;
+}
+
+.unified-channel__server-port input {
+  width: 120px;
+}
+
+.unified-channel__address a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #185fa5;
+}
+
+.unified-channel__add {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.unified-add-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 0.5px dashed rgba(24, 95, 165, 0.45);
+  border-radius: 12px;
+  background: rgba(230, 241, 251, 0.35);
+}
+
+.unified-add-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #55606e);
+}
+
+.unified-add-row__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.unified-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  color: #a32d2d;
+}
+
+.unified-error--summary {
+  margin-top: 12px;
+}
+
+/* ---- Route manager cards ---- */
+.route-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.route-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.route-card__fields {
+  display: grid;
+  gap: 10px;
+}
+
+.route-card__fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary, #55606e);
+}
+
+.route-card__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.health-dot--pending {
+  background: #b4b2a9;
+}
+
+@media (max-width: 720px) {
+  .unified-service__head {
+    flex-wrap: wrap;
+  }
+
+  .unified-service__head .service-status {
+    margin-left: 0;
+  }
+}
