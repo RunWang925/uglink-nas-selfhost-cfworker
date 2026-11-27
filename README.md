@@ -11,6 +11,7 @@
   <p>
     <a href="#快速开始">快速开始</a> ·
     <a href="docs/deployment.md">使用指南</a> ·
+    <a href="docs/nas-deployment.md">SELFHOST 版 NAS 部署指南</a> ·
     <a href="https://github.com/Leonis-Q-F/uglink-worker-nas/releases">更新记录</a> ·
     <a href="CONTRIBUTING.md">参与贡献</a>
   </p>
