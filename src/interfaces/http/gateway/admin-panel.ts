@@ -6,6 +6,7 @@ import {
 } from 'node:http';
 import type { TrafficSnapshot } from '../../../infrastructure/monitoring/traffic-stats';
 import type { NodeGatewayStoredConfig } from './node-config';
+import { SELFHOST_VERSION } from '../../../selfhost-version';
 
 const MAX_BODY_BYTES = 262_144;
 
@@ -116,7 +117,7 @@ const PANEL_HTML = `<!doctype html>
 </head>
 <body>
 <main>
-  <h1>UGLINK 自托管网关 <span class="muted" style="font-size:13px">— 状态屏</span></h1>
+  <h1>UGLINK 自托管网关（SELFHOST 版） <span class="muted" style="font-size:13px">— 状态屏 · ${SELFHOST_VERSION}</span></h1>
   <div id="warn"></div>
 
   <section>
