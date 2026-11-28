@@ -1,16 +1,18 @@
 import { ArrowDownUp, Cloud, HardDrive, RefreshCw, Route } from 'lucide-react';
 import type { ProviderStatus } from '../../../application/console/contracts';
-import { formatBytes, useServerGateway } from '../lib/use-server-gateway';
+import { formatBytes, type ServerGatewayState } from '../lib/use-server-gateway';
 
 interface RouteManagerPanelProps {
-  csrfToken: string;
+  // Shared gateway state from the Dashboard: a single useServerGateway
+  // instance keeps the route manager, service list and setup guide in sync
+  // (configuring the gateway here must immediately unblock 服务与访问).
+  server: ServerGatewayState;
   cfStatus: ProviderStatus;
   cfConnected: boolean;
   onConfigureCf: () => void;
 }
 
-export function RouteManagerPanel({ csrfToken, cfStatus, cfConnected, onConfigureCf }: RouteManagerPanelProps) {
-  const server = useServerGateway(csrfToken);
+export function RouteManagerPanel({ server, cfStatus, cfConnected, onConfigureCf }: RouteManagerPanelProps) {
   const traffic = server.status?.traffic;
 
   return (

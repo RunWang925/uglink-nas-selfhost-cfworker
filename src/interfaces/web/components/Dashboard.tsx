@@ -485,7 +485,15 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
     if (job.phase === 'healthy' || job.phase === 'failed') void loadDiagnostics(false);
   }, [deploymentConfig, job, loadDiagnostics]);
 
-  const visibleValidation = useMemo(() => validateUglinkConfig(config), [config]);
+  const visibleValidation = useMemo(() => {
+    const result = validateUglinkConfig(config);
+    if (target) return result;
+    // Server-only mode: nothing gets published to Cloudflare, and the gateway
+    // keeps its own NAS credentials, so missing console-side UGREENlink
+    // credentials (their panel is hidden here) must not block saving mappings.
+    const blocking = result.checks.filter((check) => check.level === 'error' && check.id !== 'uglink-id' && check.id !== 'username');
+    return { valid: blocking.length === 0, checks: result.checks };
+  }, [config, target]);
   const hasConfigChanges = !configsEqual(config, savedConfig);
   const hasChanges = hasConfigChanges || password.length > 0;
   const server = useServerGateway(bootstrap.csrfToken);
@@ -609,6 +617,11 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
           saved = false;
         } else {
           saved = await server.push();
+          // Surface the gateway's rejection reason here too — the detailed
+          // message otherwise only appears on the route manager page.
+          if (!saved && server.message?.kind === 'bad') {
+            setNotice({ type: 'error', message: server.message.text });
+          }
         }
       }
       if (saved) setNotice({ type: 'success', message: '已保存' });
@@ -779,7 +792,7 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
             </div>
           ) : section === 'server' ? (
             <RouteManagerPanel
-              csrfToken={bootstrap.csrfToken}
+              server={server}
               cfStatus={bootstrap.providers.cloudflare}
               cfConnected={Boolean(target)}
               onConfigureCf={() => setSection('security')}
