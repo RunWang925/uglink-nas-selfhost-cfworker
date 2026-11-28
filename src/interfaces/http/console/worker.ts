@@ -16,6 +16,9 @@ import { ApplicationError } from '../../../application/common/application-error'
 import type { UglinkConfig } from '../../../domain/configuration/model';
 import type { DeploymentJob, DiagnosticEntry, ServiceHealth } from '../../../domain/deployment/model';
 import { validateUglinkConfig } from '../../../domain/configuration/validation';
+import { ProxyAuthenticationError } from '../../../domain/proxy/errors';
+import { MemoryTtlCache } from '../../../infrastructure/persistence/memory-ttl-cache';
+import { verifyUgreenCredentials, type UgreenSessionRuntime } from '../../../infrastructure/ugreen/session-service';
 import {
   cloudflareConnectionProvider,
   createCloudflareDeploymentProvider
@@ -56,6 +59,39 @@ function providerStatus(connected: boolean, label?: string, detail?: string): Pr
   return connected
     ? { state: 'connected', ...(label ? { label } : {}), ...(detail ? { detail } : {}) }
     : { state: 'disconnected' };
+}
+
+function nasAuthenticationMessage(apiCode: ProxyAuthenticationError['apiCode']): string {
+  if (typeof apiCode === 'number') {
+    switch (apiCode) {
+      case 1003:
+      case 1205:
+        return '用户名或密码错误。';
+      case 1120:
+        return '账号已锁定，请稍后再试。';
+      case 1113:
+        return '当前登录来源受限，请稍后再试。';
+      case 1000:
+      case 1001:
+        return '账号已被停用。';
+      case 1206:
+        return '密码已过期，请先在绿联账号中修改。';
+      default:
+        return `绿联登录失败（代码 ${apiCode}）。`;
+    }
+  }
+  switch (apiCode) {
+    case 'otp_required':
+      return '登录需要验证码，请先处理绿联账号的安全验证。';
+    case 'backoff':
+      return '登录尝试过于频繁，请约 5 分钟后再试。';
+    case 'timeout':
+      return '连接绿联服务超时，请稍后重试。';
+    case 'unavailable':
+      return '绿联认证服务暂不可用，请稍后重试。';
+    default:
+      return '绿联登录验证失败，请核对凭据。';
+  }
 }
 
 function connectionProvider(env: ConsoleWorkerEnv) {
@@ -171,6 +207,34 @@ async function route(request: Request, env: ConsoleWorkerEnv, session: SessionHa
     session.data.accessMode = body.accessMode as AccessMode;
     await saveSession(env, session);
     return json(await bootstrap(env, session));
+  }
+
+  if (request.method === 'POST' && pathname === '/api/nas/verify') {
+    assertSameOrigin(request, context.externalOrigin);
+    assertCsrf(request, session);
+    const body = await readJson<{ id?: string; username?: string; password?: string }>(request, 4_096);
+    const id = body.id?.trim() ?? '';
+    const username = body.username?.trim() ?? '';
+    const password = body.password ?? '';
+    if (!id || !username || !password) {
+      throw new ApplicationError(400, 'missing_nas_credentials', '请填写 UGREENlink ID、登录用户名和密码。');
+    }
+    const runtime: UgreenSessionRuntime = {
+      uglinkId: id,
+      username,
+      password,
+      sessionNamespace: 'verify',
+      cache: new MemoryTtlCache()
+    };
+    try {
+      await verifyUgreenCredentials(runtime);
+      return json({ ok: true });
+    } catch (error) {
+      if (error instanceof ProxyAuthenticationError) {
+        throw new ApplicationError(422, String(error.apiCode), nasAuthenticationMessage(error.apiCode));
+      }
+      throw error;
+    }
   }
 
   if (request.method === 'POST' && pathname === '/api/validate') {

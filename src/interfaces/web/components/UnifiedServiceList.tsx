@@ -1,36 +1,36 @@
 import {
   AlertCircle,
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
   Circle,
   Cloud,
-  ExternalLink,
   HardDrive,
   LoaderCircle,
   Plus,
-  Trash2,
-  X
+  Search,
+  Trash2
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { UglinkConfig, UglinkService } from '../../../domain/configuration/model';
 import type { DeploymentJob, ServiceHealthResponse } from '../../../domain/deployment/model';
 import { normalizeHostname } from '../../../domain/configuration/validation';
 import type { ServerGatewayState, ServerMapping } from '../lib/use-server-gateway';
-import { SelectMenu } from './SelectMenu';
-import { Toggle } from './Toggle';
 
 const ACCESS_MODE_OPTIONS = [
-  { value: 'proxy', label: '代理' },
-  { value: 'ticket', label: '票据' }
+  { value: 'proxy', label: '代理模式' },
+  { value: 'ticket', label: '绿联跳转' }
 ] as const;
 
-type ServiceStatusTone = 'success' | 'progress' | 'pending' | 'error' | 'neutral';
+const CUSTOM_DOMAIN_STORAGE_KEY = 'uglink_server_custom_domains';
+const CIRCLED_NUMBERS = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳';
 
-interface ServiceStatusValue {
-  label: string;
-  detail: string;
-  tone: ServiceStatusTone;
+function sequenceLabel(index: number): string {
+  return CIRCLED_NUMBERS[index - 1] ?? String(index);
+}
+
+function validPort(value: string): boolean {
+  if (!/^\d{1,5}$/u.test(value)) return false;
+  const port = Number(value);
+  return port >= 1 && port <= 65535;
 }
 
 function compactFailureLabel(result: ServiceHealthResponse['services'][number]): string {
@@ -55,6 +55,14 @@ function compactFailureLabel(result: ServiceHealthResponse['services'][number]):
   if (result.code && labels[result.code]) return labels[result.code]!;
   if (result.httpStatus !== undefined) return `HTTP ${result.httpStatus}`;
   return '异常';
+}
+
+type ServiceStatusTone = 'success' | 'progress' | 'pending' | 'error' | 'neutral';
+
+interface ServiceStatusValue {
+  label: string;
+  detail: string;
+  tone: ServiceStatusTone;
 }
 
 function resolveServiceStatus(
@@ -156,12 +164,39 @@ function resolveServiceStatus(
   };
 }
 
+function serverStatus(mapping: ServerMapping, server: ServerGatewayState): ServiceStatusValue {
+  if (!server.connected) {
+    return { label: '未连接', detail: '请到线路管理配置自建服务网关。', tone: 'neutral' };
+  }
+  const listening = server.listeningByName.get(mapping.name.trim());
+  if (listening === undefined) {
+    return { label: '状态未知', detail: '等待网关状态刷新。', tone: 'neutral' };
+  }
+  return listening
+    ? { label: '已同步', detail: `网关端口 ${mapping.serverPort} 正在监听。`, tone: 'success' }
+    : { label: '未同步', detail: `网关端口 ${mapping.serverPort} 尚未监听，请保存后重试。`, tone: 'error' };
+}
+
 function serviceAccessAddress(hostname: string): string | undefined {
   try {
     return `https://${normalizeHostname(hostname)}`;
   } catch {
     return undefined;
   }
+}
+
+function gatewayHost(server: ServerGatewayState): string {
+  try {
+    return new URL(server.connection.baseUrl).hostname;
+  } catch {
+    return '';
+  }
+}
+
+function serverAccessAddress(mapping: ServerMapping, server: ServerGatewayState): string | undefined {
+  const host = gatewayHost(server);
+  const port = mapping.serverPort.trim();
+  return host && port ? `http://${host}:${port}` : undefined;
 }
 
 function StatusChip({ value, onInspect }: { value: ServiceStatusValue; onInspect?: () => void }) {
@@ -198,52 +233,101 @@ function StatusChip({ value, onInspect }: { value: ServiceStatusValue; onInspect
   );
 }
 
-// ---------------------------------------------------------------------------
-// Unified service model: one row per NAS service, A/B channels nested inside.
-// ---------------------------------------------------------------------------
+// One record = one access route of one NAS port. Records live in a box keyed by
+// the NAS port; names are independent for every record.
+type EntryKind = 'cf' | 'server';
 
-type Channel =
-  | { kind: 'cf'; index: number; service: UglinkService }
-  | { kind: 'server'; index: number; mapping: ServerMapping };
-
-interface ServiceGroup {
+interface EntryBase {
   key: string;
+  kind: EntryKind;
+  index: number;
   name: string;
-  nasPort: string;
-  channels: Channel[];
+  port: string;
+  mode: 'proxy' | 'ticket';
 }
 
-function nasPortOf(channel: Channel): string {
-  if (channel.kind === 'cf') return String(channel.service.port ?? '');
-  return channel.mapping.nasPort.trim();
+interface CfEntry extends EntryBase {
+  kind: 'cf';
+  service: UglinkService;
 }
 
-function groupServices(config: UglinkConfig, mappings: ServerMapping[]): ServiceGroup[] {
-  const groups = new Map<string, ServiceGroup>();
-  const ensure = (rawName: string): ServiceGroup => {
-    const name = rawName.trim();
-    const key = name.toLowerCase() || '(unnamed)';
+interface ServerEntry extends EntryBase {
+  kind: 'server';
+  mapping: ServerMapping;
+}
+
+type Entry = CfEntry | ServerEntry;
+
+interface PortGroup {
+  key: string;
+  port: string;
+  entries: Entry[];
+}
+
+function buildGroups(config: UglinkConfig, mappings: ServerMapping[]): PortGroup[] {
+  const groups = new Map<string, PortGroup>();
+  const ensure = (port: string): PortGroup => {
+    const key = port.trim() || '(空端口)';
     let group = groups.get(key);
     if (!group) {
-      group = { key, name, nasPort: '', channels: [] };
+      group = { key, port: port.trim(), entries: [] };
       groups.set(key, group);
     }
     return group;
   };
   config.services.forEach((service, index) => {
-    const group = ensure(service.name);
-    group.channels.push({ kind: 'cf', index, service });
+    ensure(String(service.port ?? '')).entries.push({
+      key: `cf:${index}`,
+      kind: 'cf',
+      index,
+      name: service.name,
+      port: String(service.port ?? ''),
+      mode: service.accessMode ?? 'proxy',
+      service
+    });
   });
   mappings.forEach((mapping, index) => {
-    const group = ensure(mapping.name);
-    group.channels.push({ kind: 'server', index, mapping });
+    ensure(mapping.nasPort).entries.push({
+      key: `server:${index}`,
+      kind: 'server',
+      index,
+      name: mapping.name,
+      port: mapping.nasPort,
+      mode: mapping.accessMode ?? 'proxy',
+      mapping
+    });
   });
-  for (const group of groups.values()) {
-    const cf = group.channels.find((channel) => channel.kind === 'cf');
-    const server = group.channels.find((channel) => channel.kind === 'server');
-    group.nasPort = cf ? String((cf as { service: UglinkService }).service.port ?? '') : server ? (server as { mapping: ServerMapping }).mapping.nasPort : '';
-  }
   return [...groups.values()];
+}
+
+function entryAddress(entry: Entry, server: ServerGatewayState, customDomain: string): string | undefined {
+  if (entry.kind === 'cf') return serviceAccessAddress(entry.service.hostname);
+  return serverAccessAddress(entry.mapping, server) ?? (customDomain || undefined);
+}
+
+function entrySearchText(entry: Entry, server: ServerGatewayState, customDomain: string): string {
+  return [
+    entry.name,
+    entry.port,
+    entry.kind === 'cf' ? 'Cloudflare' : '自建服务',
+    entry.mode === 'ticket' ? '绿联跳转' : '代理模式',
+    entry.kind === 'cf' ? entry.service.hostname : serverAccessAddress(entry.mapping, server) ?? '',
+    customDomain
+  ].join(' ').toLowerCase();
+}
+
+function loadCustomDomains(): Record<string, string> {
+  try {
+    const raw = window.localStorage.getItem(CUSTOM_DOMAIN_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([, value]) => typeof value === 'string')
+    ) as Record<string, string>;
+  } catch {
+    return {};
+  }
 }
 
 export interface UnifiedIssues {
@@ -257,19 +341,13 @@ export function validateUnifiedServices(config: UglinkConfig, mappings: ServerMa
   const groupErrors = new Map<string, string[]>();
   const cfChannelErrors = new Map<number, string>();
   const serverChannelErrors = new Map<number, string>();
-  const fail = (group: ServiceGroup, message: string) => {
+  const fail = (group: PortGroup, message: string) => {
     const list = groupErrors.get(group.key) ?? [];
     list.push(message);
     groupErrors.set(group.key, list);
   };
-  const portPattern = /^\d{1,5}$/;
-  const validPort = (value: string) => {
-    if (!portPattern.test(value)) return false;
-    const port = Number(value);
-    return port >= 1 && port <= 65535;
-  };
 
-  const groups = groupServices(config, mappings);
+  const groups = buildGroups(config, mappings);
   const hostnameSeen = new Map<string, number>();
   const serverPortSeen = new Map<string, string>();
 
@@ -289,28 +367,20 @@ export function validateUnifiedServices(config: UglinkConfig, mappings: ServerMa
   mappings.forEach((mapping, index) => {
     const port = mapping.serverPort.trim();
     if (!validPort(port)) {
-      serverChannelErrors.set(index, '服务器端口需为 1-65535');
+      serverChannelErrors.set(index, '监听端口需为 1-65535');
     } else if (serverPortSeen.has(port)) {
-      serverChannelErrors.set(index, `端口与「${serverPortSeen.get(port)}」重复`);
+      serverChannelErrors.set(index, `监听端口与「${serverPortSeen.get(port)}」重复`);
     } else {
       serverPortSeen.set(port, mapping.name.trim() || '其他服务');
     }
   });
 
   for (const group of groups) {
-    const cfChannels = group.channels.filter((channel) => channel.kind === 'cf') as Array<{ kind: 'cf'; index: number; service: UglinkService }>;
-    if (!group.name.trim()) {
-      fail(group, '服务名不能为空');
-    }
-    if (cfChannels.length > 1) {
-      fail(group, `存在 ${cfChannels.length} 条同名 Cloudflare 服务，请改名或删除多余条目`);
-    }
-    if (!validPort(group.nasPort)) {
+    if (!validPort(group.port)) {
       fail(group, 'NAS 端口需为 1-65535');
     }
-    const ports = new Set(group.channels.map(nasPortOf).filter(Boolean));
-    if (group.channels.length > 1 && ports.size > 1) {
-      fail(group, '两条通道的 NAS 端口不一致，同一服务必须同源');
+    if (group.entries.some((entry) => !entry.name.trim())) {
+      fail(group, '服务名不能为空');
     }
   }
 
@@ -353,15 +423,31 @@ export function UnifiedServiceList({
   healthCheckError,
   onInspectService
 }: UnifiedServiceListProps) {
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-  const [pendingRemoval, setPendingRemoval] = useState<string>();
-  const [pendingChannelRemoval, setPendingChannelRemoval] = useState<string>();
+  const [editingKey, setEditingKey] = useState<string>();
+  const [confirmDeleteKey, setConfirmDeleteKey] = useState<string>();
+  const [query, setQuery] = useState('');
   const [adding, setAdding] = useState(false);
   const [draftName, setDraftName] = useState('');
   const [draftPort, setDraftPort] = useState('');
+  const [draftRoute, setDraftRoute] = useState<'cf' | 'server'>(cfEnabled ? 'cf' : 'server');
+  const [draftDomain, setDraftDomain] = useState('');
+  const [draftServerPort, setDraftServerPort] = useState('');
+  const [draftCustomDomain, setDraftCustomDomain] = useState('');
+  const [draftMode, setDraftMode] = useState<'proxy' | 'ticket'>('proxy');
+  const [draftError, setDraftError] = useState<string>();
+  const [customDomains, setCustomDomains] = useState<Record<string, string>>(loadCustomDomains);
+  const [addedPorts, setAddedPorts] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(CUSTOM_DOMAIN_STORAGE_KEY, JSON.stringify(customDomains));
+    } catch {
+      // Browser storage may be unavailable; the UI keeps working in memory.
+    }
+  }, [customDomains]);
 
   const issues = useMemo(() => validateUnifiedServices(config, server.mappings), [config, server.mappings]);
-  const groups = useMemo(() => groupServices(config, server.mappings), [config, server.mappings]);
+  const groups = useMemo(() => buildGroups(config, server.mappings), [config, server.mappings]);
   const deploymentByHostname = useMemo(() => new Map(
     (job?.services || []).map((service) => [service.hostname.toLowerCase(), service])
   ), [job]);
@@ -369,146 +455,355 @@ export function UnifiedServiceList({
     (publishedHealth?.services || []).map((service) => [service.hostname.toLowerCase(), service])
   ), [publishedHealth]);
 
-  const toggleExpand = (key: string) => {
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
+  const customDomainOf = (entry: Entry): string => (
+    entry.kind === 'server' ? customDomains[entry.mapping.serverPort.trim()] ?? '' : ''
+  );
+  const normalizedQuery = query.trim().toLowerCase();
+
+  // Brand-new ports are appended after all existing boxes, no matter which
+  // underlying data source (Cloudflare or self-hosted) the record came from.
+  const orderedGroups = useMemo(() => {
+    const rank = (port: string) => addedPorts.indexOf(port.trim());
+    return [...groups].sort((left, right) => {
+      const leftRank = rank(left.port);
+      const rightRank = rank(right.port);
+      if (leftRank >= 0 && rightRank >= 0) return leftRank - rightRank;
+      if (leftRank >= 0) return 1;
+      if (rightRank >= 0) return -1;
+      return 0;
     });
-  };
+  }, [groups, addedPorts]);
+
+  const visibleGroups = useMemo(() => orderedGroups.map((group, index) => ({
+    ...group,
+    seq: index + 1,
+    entries: normalizedQuery
+      ? group.entries.filter((entry) => entrySearchText(entry, server, customDomainOf(entry)).includes(normalizedQuery))
+      : group.entries
+  })).filter((group) => group.entries.length > 0), [orderedGroups, normalizedQuery, server, customDomains]);
 
   const mutateCf = (mutator: (services: UglinkService[]) => UglinkService[]) => {
     onConfigChange({ ...config, services: mutator(config.services) });
   };
 
-  const updateCf = (index: number, patch: Partial<UglinkService>) => {
-    mutateCf((services) => services.map((service, i) => (i === index ? { ...service, ...patch } : service)));
-  };
-
-  const updateServer = (index: number, patch: Partial<ServerMapping>) => {
-    server.setMappings((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
-  };
-
-  // Service-level edits propagate to every channel so A/B stay consistent.
-  const renameService = (group: ServiceGroup, name: string) => {
-    mutateCf((services) => services.map((service, i) => (
-      group.channels.some((channel) => channel.kind === 'cf' && channel.index === i) ? { ...service, name } : service
-    )));
-    server.setMappings((rows) => rows.map((row, i) => (
-      group.channels.some((channel) => channel.kind === 'server' && channel.index === i) ? { ...row, name } : row
-    )));
-  };
-
-  const changeNasPort = (group: ServiceGroup, port: string) => {
-    mutateCf((services) => services.map((service, i) => (
-      group.channels.some((channel) => channel.kind === 'cf' && channel.index === i)
-        ? { ...service, port: Number(port) || 0 }
-        : service
-    )));
-    server.setMappings((rows) => rows.map((row, i) => (
-      group.channels.some((channel) => channel.kind === 'server' && channel.index === i)
-        ? { ...row, nasPort: port.replace(/\D/g, '') }
-        : row
-    )));
-  };
-
-  const addService = (route: 'cf' | 'server') => {
-    const name = draftName.trim();
-    const port = draftPort.replace(/\D/g, '');
-    if (!name || !port) return;
-    if (route === 'cf') {
-      mutateCf((services) => [...services, {
-        name,
-        hostname: '',
-        port: Number(port),
-        enabled: true,
-        accessMode: 'proxy'
-      }]);
-    } else {
-      server.setMappings((rows) => [...rows, { name, nasPort: port, serverPort: '', accessMode: 'proxy' }]);
+  const updateEntry = (entry: Entry, patch: Partial<Pick<UglinkService, 'name' | 'hostname' | 'accessMode' | 'enabled'>> | Partial<ServerMapping>) => {
+    if (entry.kind === 'cf') {
+      mutateCf((services) => services.map((service, index) => (
+        index === entry.index ? { ...service, ...patch } : service
+      )));
+      return;
     }
-    setExpanded((current) => new Set(current).add(name.toLowerCase()));
+    const current = server.mappings[entry.index];
+    const nextPort = (patch as Partial<ServerMapping>).serverPort;
+    if (current && nextPort !== undefined && nextPort.trim() !== current.serverPort.trim()) {
+      const oldKey = current.serverPort.trim();
+      const newKey = nextPort.trim();
+      setCustomDomains((previous) => {
+        const next = { ...previous };
+        const moved = next[oldKey];
+        delete next[oldKey];
+        if (newKey && moved) next[newKey] = moved;
+        return next;
+      });
+    }
+    server.setMappings((rows) => rows.map((row, index) => (
+      index === entry.index ? { ...row, ...patch } : row
+    )));
+  };
+
+  const updateCustomDomain = (mapping: ServerMapping, value: string) => {
+    const key = mapping.serverPort.trim();
+    if (!key) return;
+    setCustomDomains((previous) => ({ ...previous, [key]: value }));
+  };
+
+  const removeEntry = (entry: Entry) => {
+    setEditingKey(undefined);
+    setConfirmDeleteKey(undefined);
+    if (entry.kind === 'cf') {
+      mutateCf((services) => services.filter((_, index) => index !== entry.index));
+      return;
+    }
+    const key = entry.mapping.serverPort.trim();
+    if (key) {
+      setCustomDomains((previous) => {
+        const next = { ...previous };
+        delete next[key];
+        return next;
+      });
+    }
+    server.setMappings((rows) => rows.filter((_, index) => index !== entry.index));
+  };
+
+  const handleDelete = (entry: Entry) => {
+    if (confirmDeleteKey !== entry.key) {
+      setConfirmDeleteKey(entry.key);
+      return;
+    }
+    removeEntry(entry);
+  };
+
+  const handleDraftName = (value: string) => {
+    setDraftName(value);
+    if (!draftPort) {
+      const match = groups.flatMap((group) => group.entries)
+        .find((entry) => entry.name.trim().toLowerCase() === value.trim().toLowerCase());
+      if (match) setDraftPort(match.port);
+    }
+  };
+
+  const handleDraftPort = (value: string) => {
+    const port = value.replace(/\D/g, '');
+    setDraftPort(port);
+    setDraftServerPort(port);
+    if (!draftName) {
+      const match = groups.flatMap((group) => group.entries)
+        .find((entry) => entry.port === port && entry.name.trim());
+      if (match) setDraftName(match.name);
+    }
+  };
+
+  const resetDraft = () => {
     setAdding(false);
     setDraftName('');
     setDraftPort('');
+    setDraftDomain('');
+    setDraftServerPort('');
+    setDraftCustomDomain('');
+    setDraftMode('proxy');
+    setDraftRoute(cfEnabled ? 'cf' : 'server');
+    setDraftError(undefined);
   };
 
-  const addChannel = (group: ServiceGroup, route: 'cf' | 'server') => {
-    if (route === 'cf') {
-      mutateCf((services) => [...services, {
-        name: group.name,
-        hostname: '',
-        port: Number(group.nasPort) || 80,
-        enabled: true,
-        accessMode: 'proxy'
-      }]);
-    } else {
-      server.setMappings((rows) => [...rows, {
-        name: group.name,
-        nasPort: group.nasPort,
-        serverPort: '',
-        accessMode: 'proxy'
-      }]);
-    }
-    setExpanded((current) => new Set(current).add(group.key));
-  };
-
-  const removeChannel = (group: ServiceGroup, channel: Channel) => {
-    const token = `${group.key}:${channel.kind}`;
-    if (pendingChannelRemoval !== token) {
-      setPendingChannelRemoval(token);
+  const finishDraft = () => {
+    const name = draftName.trim();
+    const port = draftPort.replace(/\D/g, '');
+    if (!name || !port) {
+      setDraftError('请填写服务名称和 NAS 端口。');
       return;
     }
-    setPendingChannelRemoval(undefined);
-    if (channel.kind === 'cf') {
-      mutateCf((services) => services.filter((_, i) => i !== channel.index));
-    } else {
-      server.setMappings((rows) => rows.filter((_, i) => i !== channel.index));
-    }
-  };
-
-  const removeService = (group: ServiceGroup) => {
-    if (pendingRemoval !== group.key) {
-      setPendingRemoval(group.key);
+    if (!validPort(port)) {
+      setDraftError('NAS 端口需为 1-65535。');
       return;
     }
-    setPendingRemoval(undefined);
-    const cfIndexes = new Set(group.channels.filter((channel) => channel.kind === 'cf').map((channel) => (channel as { index: number }).index));
-    const serverIndexes = new Set(group.channels.filter((channel) => channel.kind === 'server').map((channel) => (channel as { index: number }).index));
-    mutateCf((services) => services.filter((_, i) => !cfIndexes.has(i)));
-    server.setMappings((rows) => rows.filter((_, i) => !serverIndexes.has(i)));
-  };
-
-  const summaryOf = (group: ServiceGroup): ServiceStatusValue => {
-    const tones: ServiceStatusTone[] = group.channels.map((channel) => {
-      if (channel.kind === 'cf') {
-        return resolveServiceStatus(
-          channel.service,
-          deployedConfig,
-          deploymentConfig,
-          deploymentServiceHostnames,
-          deploymentByHostname,
-          publishedByHostname,
-          job,
-          deploying,
-          checkingHealth,
-          healthCheckError
-        ).tone;
+    if (!groups.some((group) => group.port === port)) {
+      setAddedPorts((previous) => [...previous, port]);
+    }
+    if (draftRoute === 'cf') {
+      const hostname = draftDomain.trim().toLowerCase().replace(/^https?:\/\//u, '').replace(/\/$/u, '');
+      if (!hostname || serviceAccessAddress(hostname) === undefined) {
+        setDraftError('请填写正确的访问域名（只填域名本身，例如 sub.example.com）。');
+        return;
       }
-      if (!server.connected) return 'neutral';
-      const listening = server.listeningByName.get(channel.mapping.name.trim());
-      if (listening === undefined) return 'neutral';
-      return listening ? 'success' : 'error';
-    });
-    if (issues.groupErrors.has(group.key)) return { label: '待修正', detail: issues.groupErrors.get(group.key)!.join('；'), tone: 'error' };
-    if (tones.includes('error')) return { label: '有异常', detail: '存在通道异常，展开查看。', tone: 'error' };
-    if (tones.includes('pending')) return { label: '待发布', detail: '部分修改尚未发布。', tone: 'pending' };
-    if (tones.includes('progress')) return { label: '处理中', detail: '发布或检查进行中。', tone: 'progress' };
-    if (tones.length > 0 && tones.every((tone) => tone === 'success')) return { label: '运行正常', detail: '所有通道正常。', tone: 'success' };
-    if (tones.includes('neutral')) return { label: '部分未知', detail: '部分通道暂无状态数据。', tone: 'neutral' };
-    return { label: '未配置通道', detail: '展开后添加访问通道。', tone: 'neutral' };
+      mutateCf((services) => [...services, {
+        name,
+        hostname,
+        port: Number(port),
+        enabled: true,
+        accessMode: draftMode
+      }]);
+      resetDraft();
+      return;
+    }
+    const listenPort = (draftServerPort || port).replace(/\D/g, '');
+    if (!validPort(listenPort)) {
+      setDraftError('监听端口需为 1-65535。');
+      return;
+    }
+    server.setMappings((rows) => [...rows, {
+      name,
+      nasPort: port,
+      serverPort: listenPort,
+      accessMode: draftMode
+    }]);
+    const custom = draftCustomDomain.trim();
+    if (custom) {
+      setCustomDomains((previous) => ({ ...previous, [listenPort]: custom }));
+    }
+    resetDraft();
   };
+
+  const renderRouteBadge = (entry: Entry) => (
+    <span className={`route-badge ${entry.kind === 'cf' ? 'route-badge--cf' : 'route-badge--server'}`}>
+      {entry.kind === 'cf' ? <Cloud size={13} /> : <HardDrive size={13} />}
+      {entry.kind === 'cf' ? 'Cloudflare' : '自建服务'}
+    </span>
+  );
+
+  const renderModeSelect = (entry: Entry) => (
+    <select
+      className="entry-select mode-select"
+      value={entry.mode}
+      aria-label={`${entry.name} 的访问模式`}
+      onChange={(event) => updateEntry(entry, { accessMode: event.target.value as 'proxy' | 'ticket' })}
+    >
+      {ACCESS_MODE_OPTIONS.map((option) => (
+        <option key={option.value} value={option.value}>{option.label}</option>
+      ))}
+    </select>
+  );
+
+  const renderActions = (entry: Entry, editing: boolean) => (
+    editing ? (
+      <>
+        <button className="button button--secondary button--compact" type="button" onClick={() => {
+          setEditingKey(undefined);
+          setConfirmDeleteKey(undefined);
+        }}>✓ 完成</button>
+        <button
+          className={`button button--ghost button--compact${confirmDeleteKey === entry.key ? ' button--danger' : ''}`}
+          type="button"
+          title="删除这条记录（需再次点击确认）"
+          onBlur={() => setConfirmDeleteKey(undefined)}
+          onClick={() => handleDelete(entry)}
+        >
+          <Trash2 size={14} /> {confirmDeleteKey === entry.key ? '确认删除' : '删除'}
+        </button>
+      </>
+    ) : (
+      <>
+        <button
+          className="button button--secondary button--compact"
+          type="button"
+          onClick={() => {
+            setEditingKey(entry.key);
+            setConfirmDeleteKey(undefined);
+          }}
+        >✎ 编辑</button>
+      </>
+    )
+  );
+
+  const renderReadView = (entry: Entry, seq: number) => {
+    const customDomain = customDomainOf(entry);
+    const address = entryAddress(entry, server, customDomain);
+    const status = entry.kind === 'cf'
+      ? resolveServiceStatus(
+        entry.service,
+        deployedConfig,
+        deploymentConfig,
+        deploymentServiceHostnames,
+        deploymentByHostname,
+        publishedByHostname,
+        job,
+        deploying,
+        checkingHealth,
+        healthCheckError
+      )
+      : serverStatus(entry.mapping, server);
+    const entryError = entry.kind === 'cf'
+      ? issues.cfChannelErrors.get(entry.index)
+      : issues.serverChannelErrors.get(entry.index);
+    return (
+      <div className="entry-grid row-view">
+        <span className="seq-tag">{sequenceLabel(seq)}</span>
+        <strong className="view-name" title={entry.name}>{entry.name || '未命名'}</strong>
+        <span className="port-chip">端口 {entry.port}</span>
+        {renderRouteBadge(entry)}
+        <span className={`addr-slot${customDomain && entry.kind === 'server' ? ' addr-slot--stack' : ''}`}>
+          {address ? (
+            <a
+              className="addr-chip"
+              href={address.startsWith('http') ? address : `https://${address}`}
+              target="_blank"
+              rel="noreferrer"
+              title="点击打开"
+            >
+              {address}
+            </a>
+          ) : (
+            <span className="muted">{entry.kind === 'cf' ? '未填写域名' : '未配置监听端口'}</span>
+          )}
+          {customDomain && entry.kind === 'server' && address !== customDomain && (
+            <a className="addr-chip addr-chip--domain" href={customDomain} target="_blank" rel="noreferrer" title="点击打开自定义域名">
+              {customDomain}
+            </a>
+          )}
+        </span>
+        <span className="mode-chip">{entry.mode === 'ticket' ? '绿联跳转' : '代理模式'}</span>
+        <div className="cell-actions">
+          <StatusChip
+            value={status}
+            onInspect={entry.kind === 'cf' && entry.service.hostname ? () => onInspectService(entry.service.hostname) : undefined}
+          />
+          {renderActions(entry, false)}
+        </div>
+        {entryError && <p className="entry-error"><AlertCircle size={13} /> {entryError}</p>}
+      </div>
+    );
+  };
+
+  const renderEditView = (entry: Entry, seq: number) => (
+    <div className="row-edit">
+      <div className="entry-grid">
+        <span className="seq-tag">{sequenceLabel(seq)}</span>
+        <label className="edit-field cell-name">
+          <span>服务名称</span>
+          <input
+            value={entry.name}
+            placeholder="服务名"
+            aria-label={`${entry.name} 的服务名称`}
+            onChange={(event) => updateEntry(entry, { name: event.target.value })}
+          />
+        </label>
+        <label className="edit-field cell-port">
+          <span>NAS 端口</span>
+          <input value={entry.port} disabled aria-label="NAS 端口不可修改" />
+        </label>
+        {renderRouteBadge(entry)}
+        {entry.kind === 'cf' ? (
+          <label className="edit-field cell-address">
+            <span>访问域名</span>
+            <input
+              value={entry.service.hostname}
+              placeholder="sub.example.com"
+              aria-label="访问域名"
+              onChange={(event) => updateEntry(entry, { hostname: event.target.value.toLowerCase() })}
+            />
+          </label>
+        ) : (
+          <div className="cell-address address-split">
+            <label className="edit-field field-ip">
+              <span>服务器 IP</span>
+              <span className="ip-chip" title="服务器 IP 由线路管理页统一配置">{gatewayHost(server) || '未配置'}</span>
+            </label>
+            <label className="edit-field field-listen">
+              <span>监听端口</span>
+              <input
+                value={entry.mapping.serverPort}
+                placeholder="例如 9091"
+                inputMode="numeric"
+                aria-label="监听端口"
+                onChange={(event) => updateEntry(entry, { serverPort: event.target.value.replace(/\D/g, '') })}
+              />
+            </label>
+          </div>
+        )}
+        <label className="edit-field cell-mode">
+          <span>模式</span>
+          {renderModeSelect(entry)}
+        </label>
+        <div className="cell-actions">
+          {entry.kind === 'cf' && renderActions(entry, true)}
+        </div>
+      </div>
+      {entry.kind === 'server' && (
+        <div className="cfg-line">
+          <label className="domain-h">
+            <span>自定义域名（可选）</span>
+            <input
+              className="domain-inline"
+              value={customDomainOf(entry)}
+              placeholder="如 http://nas.my.com"
+              aria-label="自建服务自定义域名"
+              onChange={(event) => updateCustomDomain(entry.mapping, event.target.value)}
+            />
+          </label>
+          <div className="cell-actions">{renderActions(entry, true)}</div>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="editor-stack">
@@ -516,255 +811,166 @@ export function UnifiedServiceList({
         <div className="panel__heading panel__heading--row">
           <div>
             <p className="eyebrow">统一服务列表</p>
-            <h2>服务与访问通道</h2>
-            <p>一行是一个 NAS 服务（本地端口）；展开后管理它的 Cloudflare（A）与服务器（B）访问通道。</p>
+            <h2>服务列表</h2>
+            <p>一个框 = 一个服务 · 配了 Cloudflare 就有 Cloudflare 一行，配了自建服务就有自建服务一行，都配就有两行。</p>
           </div>
-          <button className="button button--secondary" type="button" onClick={() => setAdding((current) => !current)}>
-            <Plus size={16} /> {adding ? '收起' : '添加服务'}
-          </button>
+          <div className="services-toolbar">
+            <label className="search-field">
+              <Search size={15} aria-hidden="true" />
+              <input
+                value={query}
+                placeholder="搜索名称 / 端口 / 域名"
+                aria-label="搜索服务名称、端口或域名"
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </label>
+            <button
+              className="button button--secondary button--compact"
+              type="button"
+              disabled={adding}
+              onClick={() => setAdding(true)}
+            >
+              <Plus size={15} /> 添加记录
+            </button>
+          </div>
         </div>
 
-        {adding && (
-          <div className="unified-add-row" role="form" aria-label="添加新服务">
-            <label>服务名<input
-              value={draftName}
-              onChange={(event) => setDraftName(event.target.value)}
-              placeholder="例如 openlist"
-              aria-label="新服务名"
-            /></label>
-            <label>NAS 端口<input
-              value={draftPort}
-              onChange={(event) => setDraftPort(event.target.value.replace(/\D/g, ''))}
-              placeholder="例如 5244"
-              inputMode="numeric"
-              aria-label="新服务 NAS 端口"
-            /></label>
-            <div className="unified-add-row__actions">
-              {cfEnabled && (
-                <button className="button button--secondary" type="button" disabled={!draftName.trim() || !draftPort} onClick={() => addService('cf')}>
-                  <Cloud size={15} /> 建 A 通道（CF 域名）
-                </button>
-              )}
-              <button className="button button--secondary" type="button" disabled={!draftName.trim() || !draftPort} onClick={() => addService('server')}>
-                <HardDrive size={15} /> 建 B 通道（服务器）
-              </button>
-            </div>
-            {!cfEnabled && <p className="muted">连接 Cloudflare 线路后即可为服务添加 A 通道。</p>}
-          </div>
-        )}
-
-        <div className="unified-list" role="list" aria-label="服务列表">
-          {groups.length === 0 && (
-            <div className="empty-row"><Cloud size={20} /><span>还没有服务。点击「添加服务」，填服务名和 NAS 端口后选择路线。</span></div>
+        <div className="svc-list" role="list" aria-label="服务列表">
+          {groups.length === 0 && !adding && (
+            <div className="empty-row"><Cloud size={20} /><span>还没有服务。点击「添加记录」，填好名称、端口和访问路线即可。</span></div>
           )}
-          {groups.map((group) => {
-            const isOpen = expanded.has(group.key);
-            const summary = summaryOf(group);
+          {visibleGroups.map((group) => {
+            const seq = group.seq;
             const groupErrors = issues.groupErrors.get(group.key) ?? [];
-            const cfChannel = group.channels.find((channel) => channel.kind === 'cf') as Channel & { kind: 'cf' } | undefined;
-            const serverChannel = group.channels.find((channel) => channel.kind === 'server') as Channel & { kind: 'server' } | undefined;
             return (
-              <div className={`unified-service${isOpen ? ' unified-service--open' : ''}`} role="listitem" key={group.key}>
-                <div className="unified-service__head">
-                  <button className="unified-service__toggle" type="button" aria-expanded={isOpen} onClick={() => toggleExpand(group.key)}>
-                    {isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                  </button>
-                  <label className="unified-service__name">
-                    <input
-                      value={group.name}
-                      onChange={(event) => renameService(group, event.target.value)}
-                      aria-label={`服务 ${group.name} 的名称`}
-                      placeholder="服务名"
-                    />
-                  </label>
-                  <label className="unified-service__port">
-                    <span className="muted">NAS</span>
-                    <input
-                      value={group.nasPort}
-                      onChange={(event) => changeNasPort(group, event.target.value.replace(/\D/g, ''))}
-                      aria-label={`服务 ${group.name} 的 NAS 端口`}
-                      placeholder="5244"
-                      inputMode="numeric"
-                    />
-                  </label>
-                  <div className="unified-service__badges">
-                    {cfChannel && <span className="route-badge route-badge--cf">A · CF</span>}
-                    {serverChannel && <span className="route-badge route-badge--server">B · 服务器</span>}
-                  </div>
-                  <StatusChip value={summary} />
-                  <button
-                    className={`icon-button${pendingRemoval === group.key ? ' icon-button--confirm' : ''}`}
-                    type="button"
-                    title={pendingRemoval === group.key ? '再次点击确认删除整个服务' : '删除服务（含所有通道）'}
-                    aria-label={pendingRemoval === group.key ? '再次点击确认删除服务' : '删除服务'}
-                    onClick={() => removeService(group)}
-                    onBlur={() => setPendingRemoval(undefined)}
-                  >
-                    {pendingRemoval === group.key ? <X size={16} /> : <Trash2 size={16} />}
-                  </button>
-                </div>
-
-                {isOpen && (
-                  <div className="unified-service__body">
-                    {groupErrors.map((error) => (
-                      <p className="unified-error" key={error}><AlertCircle size={14} /> {error}</p>
-                    ))}
-
-                    {cfChannel && (
-                      <div className="unified-channel unified-channel--cf">
-                        <div className="unified-channel__head">
-                          <span className="route-badge route-badge--cf">通道 A · Cloudflare</span>
-                          <StatusChip
-                            value={resolveServiceStatus(
-                              cfChannel.service,
-                              deployedConfig,
-                              deploymentConfig,
-                              deploymentServiceHostnames,
-                              deploymentByHostname,
-                              publishedByHostname,
-                              job,
-                              deploying,
-                              checkingHealth,
-                              healthCheckError
-                            )}
-                            onInspect={cfChannel.service.hostname ? () => onInspectService(cfChannel.service.hostname) : undefined}
-                          />
-                          <button
-                            className={`icon-button${pendingChannelRemoval === `${group.key}:cf` ? ' icon-button--confirm' : ''}`}
-                            type="button"
-                            title={pendingChannelRemoval === `${group.key}:cf` ? '再次点击确认删除通道' : '删除 Cloudflare 通道'}
-                            aria-label="删除 Cloudflare 通道"
-                            onClick={() => removeChannel(group, cfChannel)}
-                            onBlur={() => setPendingChannelRemoval(undefined)}
-                          >
-                            {pendingChannelRemoval === `${group.key}:cf` ? <X size={15} /> : <Trash2 size={15} />}
-                          </button>
-                        </div>
-                        {issues.cfChannelErrors.has(cfChannel.index) && (
-                          <p className="unified-error"><AlertCircle size={14} /> {issues.cfChannelErrors.get(cfChannel.index)}</p>
-                        )}
-                        <div className="unified-channel__fields">
-                          <label className="unified-channel__domain">
-                            <span>域名</span>
-                            <div className="domain-input">
-                              <Cloud size={15} />
-                              <input
-                                value={cfChannel.service.hostname}
-                                onChange={(event) => updateCf(cfChannel.index, { hostname: event.target.value.toLowerCase() })}
-                                placeholder="sub.example.com"
-                                aria-label="Cloudflare 通道域名"
-                              />
-                            </div>
-                          </label>
-                          <label className="unified-channel__mode">
-                            <span>访问方式</span>
-                            <SelectMenu
-                              value={cfChannel.service.accessMode ?? 'proxy'}
-                              options={ACCESS_MODE_OPTIONS}
-                              onChange={(accessMode) => updateCf(cfChannel.index, { accessMode })}
-                              ariaLabel="Cloudflare 通道访问方式"
-                            />
-                          </label>
-                          <div className="unified-channel__toggle">
-                            <span>启用</span>
-                            <Toggle
-                              checked={cfChannel.service.enabled !== false}
-                              onChange={(enabled) => updateCf(cfChannel.index, { enabled })}
-                              label={`${group.name} Cloudflare 通道启用状态`}
-                            />
-                          </div>
-                          <div className="unified-channel__address">
-                            <span>入口</span>
-                            {serviceAccessAddress(cfChannel.service.hostname) ? (
-                              <a href={serviceAccessAddress(cfChannel.service.hostname)} target="_blank" rel="noreferrer">
-                                <ExternalLink size={13} /> {serviceAccessAddress(cfChannel.service.hostname)}
-                              </a>
-                            ) : <span className="muted">未配置域名</span>}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {serverChannel && (
-                      <div className="unified-channel unified-channel--server">
-                        <div className="unified-channel__head">
-                          <span className="route-badge route-badge--server">通道 B · 服务器</span>
-                          <StatusChip value={(() => {
-                            if (!server.connected) return { label: '未连接服务器', detail: '请到线路管理填写服务器地址与令牌。', tone: 'neutral' as const };
-                            const listening = server.listeningByName.get(serverChannel.mapping.name.trim());
-                            if (listening === undefined) return { label: '状态未知', detail: '等待服务器状态刷新。', tone: 'neutral' as const };
-                            return listening
-                              ? { label: '监听中', detail: `服务器端口 ${serverChannel.mapping.serverPort} 正在监听。`, tone: 'success' as const }
-                              : { label: '未监听', detail: `服务器端口 ${serverChannel.mapping.serverPort} 尚未监听，请确认已同步。`, tone: 'error' as const };
-                          })()} />
-                          <button
-                            className={`icon-button${pendingChannelRemoval === `${group.key}:server` ? ' icon-button--confirm' : ''}`}
-                            type="button"
-                            title={pendingChannelRemoval === `${group.key}:server` ? '再次点击确认删除通道' : '删除服务器通道'}
-                            aria-label="删除服务器通道"
-                            onClick={() => removeChannel(group, serverChannel)}
-                            onBlur={() => setPendingChannelRemoval(undefined)}
-                          >
-                            {pendingChannelRemoval === `${group.key}:server` ? <X size={15} /> : <Trash2 size={15} />}
-                          </button>
-                        </div>
-                        {issues.serverChannelErrors.has(serverChannel.index) && (
-                          <p className="unified-error"><AlertCircle size={14} /> {issues.serverChannelErrors.get(serverChannel.index)}</p>
-                        )}
-                        <div className="unified-channel__fields">
-                          <label className="unified-channel__server-port">
-                            <span>服务器端口</span>
-                            <input
-                              value={serverChannel.mapping.serverPort}
-                              onChange={(event) => updateServer(serverChannel.index, { serverPort: event.target.value.replace(/\D/g, '') })}
-                              placeholder="例如 9091"
-                              inputMode="numeric"
-                              aria-label="服务器端口"
-                            />
-                          </label>
-                          <label className="unified-channel__mode">
-                            <span>访问方式</span>
-                            <SelectMenu
-                              value={serverChannel.mapping.accessMode}
-                              options={ACCESS_MODE_OPTIONS}
-                              onChange={(accessMode) => updateServer(serverChannel.index, { accessMode })}
-                              ariaLabel="服务器通道访问方式"
-                            />
-                          </label>
-                          <div className="unified-channel__address">
-                            <span>入口</span>
-                            {server.connection.baseUrl && serverChannel.mapping.serverPort ? (
-                              <a href={`http://${new URL(server.connection.baseUrl).host}:${serverChannel.mapping.serverPort}`} target="_blank" rel="noreferrer">
-                                <ExternalLink size={13} /> {new URL(server.connection.baseUrl).hostname}:{serverChannel.mapping.serverPort}
-                              </a>
-                            ) : <span className="muted">{server.connection.baseUrl ? '填写服务器端口后生成' : '未配置服务器地址'}</span>}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="unified-channel__add">
-                      {cfEnabled && !cfChannel && (
-                        <button className="button button--ghost" type="button" onClick={() => addChannel(group, 'cf')}>
-                          <Plus size={14} /> 添加 A 通道（Cloudflare 域名）
-                        </button>
-                      )}
-                      {!serverChannel && (
-                        <button className="button button--ghost" type="button" onClick={() => addChannel(group, 'server')}>
-                          <Plus size={14} /> 添加 B 通道（服务器端口）
-                        </button>
-                      )}
+              <div className="svc-box" role="listitem" key={group.key}>
+                <div className="svc-box__rows">
+                  {group.entries.map((entry) => (
+                    <div className="entry-row" key={entry.key}>
+                      {editingKey === entry.key ? renderEditView(entry, seq) : renderReadView(entry, seq)}
                     </div>
-                  </div>
-                )}
+                  ))}
+                </div>
+                {groupErrors.map((error) => (
+                  <p className="entry-error entry-error--group" key={error}><AlertCircle size={13} /> {error}</p>
+                ))}
               </div>
             );
           })}
+
+          {adding && !normalizedQuery && (
+            <div className="svc-box svc-box--draft">
+              <div className="svc-box__rows">
+                <div className="entry-row entry-row--draft">
+                  <div className="entry-grid">
+                    <span className="seq-tag seq-tag--draft">新</span>
+                    <label className="edit-field cell-name">
+                      <span>服务名称</span>
+                      <input value={draftName} placeholder="例如 qinglong" onChange={(event) => handleDraftName(event.target.value)} />
+                    </label>
+                    <label className="edit-field cell-port">
+                      <span>NAS 端口</span>
+                      <input value={draftPort} placeholder="5700" inputMode="numeric" onChange={(event) => handleDraftPort(event.target.value)} />
+                    </label>
+                    <label className="edit-field cell-route">
+                      <span>线路</span>
+                      <select
+                        className="entry-select route-select"
+                        value={draftRoute}
+                        aria-label="新记录线路"
+                        onChange={(event) => setDraftRoute(event.target.value as 'cf' | 'server')}
+                      >
+                        {cfEnabled && <option value="cf">Cloudflare</option>}
+                        <option value="server">自建服务</option>
+                      </select>
+                    </label>
+                    {draftRoute === 'cf' ? (
+                      <label className="edit-field cell-address">
+                        <span>访问域名</span>
+                        <input
+                          value={draftDomain}
+                          placeholder="sub.example.com"
+                          aria-label="新记录访问域名"
+                          onChange={(event) => setDraftDomain(event.target.value.toLowerCase())}
+                        />
+                      </label>
+                    ) : (
+                      <div className="cell-address address-split">
+                        <label className="edit-field field-ip">
+                          <span>服务器 IP</span>
+                          <span className="ip-chip" title="服务器 IP 由线路管理页统一配置">{gatewayHost(server) || '未配置'}</span>
+                        </label>
+                        <label className="edit-field field-listen">
+                          <span>监听端口</span>
+                          <input
+                            value={draftServerPort}
+                            placeholder="随 NAS 端口带出"
+                            inputMode="numeric"
+                            aria-label="新记录监听端口"
+                            onChange={(event) => setDraftServerPort(event.target.value.replace(/\D/g, ''))}
+                          />
+                        </label>
+                      </div>
+                    )}
+                    <label className="edit-field cell-mode">
+                      <span>模式</span>
+                      <select
+                        className="entry-select mode-select"
+                        value={draftMode}
+                        aria-label="新记录访问模式"
+                        onChange={(event) => setDraftMode(event.target.value as 'proxy' | 'ticket')}
+                      >
+                        {ACCESS_MODE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="cell-actions">
+                      <button className="button button--ghost button--compact" type="button" onClick={resetDraft}>✕ 放弃</button>
+                      <button className="button button--primary button--compact" type="button" onClick={finishDraft}>✓ 完成</button>
+                    </div>
+                  </div>
+                  {draftRoute === 'server' && (
+                    <div className="domain-sub">
+                      <input
+                        className="domain-inline"
+                        value={draftCustomDomain}
+                        placeholder="自定义域名（可选）· 如 http://nas.my.com"
+                        aria-label="新记录自定义域名"
+                        onChange={(event) => setDraftCustomDomain(event.target.value)}
+                      />
+                    </div>
+                  )}
+                  {draftError && <p className="entry-error"><AlertCircle size={13} /> {draftError}</p>}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {issues.hasErrors && (
-          <p className="unified-error unified-error--summary"><AlertCircle size={14} /> 列表中存在待修正项，修正后才能发布或同步。</p>
+          <p className="unified-error unified-error--summary"><AlertCircle size={14} /> 列表中存在待修正项，修正后才能保存更改。</p>
         )}
+
+        <div className="help-block">
+          <div className="help-row">
+            <span className="help-tag">路线</span>
+            <span className="help-txt"><strong>Cloudflare</strong> 的域名需已托管到 Cloudflare，这里只填域名本身；<strong>自建服务</strong>使用线路管理页配置的服务器 IP。</span>
+          </div>
+          <div className="help-row">
+            <span className="help-tag">模式</span>
+            <span className="help-txt">
+              <strong>代理模式</strong> = 全部流量经 Cloudflare / 自建服务网关转发到 NAS，地址始终是你的域名，速度受所走线路影响；
+              <strong>绿联跳转</strong> = 访问自己的域名后马上跳转到绿联官方服务域名（如 *.ug.link）验证身份，之后流量直接走绿联中继、不占用你的线路流量，更安全但多一步，地址栏会变成绿联域名。
+              <a
+                className="help-link"
+                href="https://github.com/RunWang925/uglink-nas-selfhost-cfworker/blob/main/docs/configuration.md#%E8%AE%BF%E9%97%AE%E6%96%B9%E5%BC%8F"
+                target="_blank"
+                rel="noreferrer"
+              >详细规则</a>
+            </span>
+          </div>
+        </div>
       </section>
     </div>
   );

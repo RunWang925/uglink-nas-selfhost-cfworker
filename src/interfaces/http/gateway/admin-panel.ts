@@ -216,7 +216,7 @@ const PANEL_HTML = `<!doctype html>
     });
   }
 
-  function modeLabel(mode) { return mode === 'ticket' ? '票据入口' : '直接代理'; }
+  function modeLabel(mode) { return mode === 'ticket' ? '绿联跳转' : '代理模式'; }
 
   function renderReadOnly(data) {
     document.getElementById('roUglinkId').textContent = data.uglinkId || '-';
@@ -260,8 +260,8 @@ const PANEL_HTML = `<!doctype html>
     tr.innerHTML = '<td><input class="f-name" value="' + esc(entry.name || '') + '" placeholder="名称"></td>'
       + '<td><input class="f-nas" value="' + esc(entry.nasPort || '') + '" placeholder="9"></td>'
       + '<td><input class="f-server" value="' + esc(entry.serverPort || '') + '" placeholder="9001"></td>'
-      + '<td><select class="f-mode"><option value="proxy"' + (entry.accessMode !== 'ticket' ? ' selected' : '') + '>直接代理</option>'
-      + '<option value="ticket"' + (entry.accessMode === 'ticket' ? ' selected' : '') + '>票据入口</option></select></td>'
+      + '<td><select class="f-mode"><option value="proxy"' + (entry.accessMode !== 'ticket' ? ' selected' : '') + '>代理模式</option>'
+      + '<option value="ticket"' + (entry.accessMode === 'ticket' ? ' selected' : '') + '>绿联跳转</option></select></td>'
       + '<td class="' + (status && status.listening ? 'ok">● 监听中' : 'bad">● 未监听') + '</td>'
       + '<td><button class="danger" type="button">删除</button></td>';
     tr.querySelector('button').addEventListener('click', function () { tr.remove(); updateHint(); });

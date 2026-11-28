@@ -3,17 +3,12 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronRight,
-  Circle,
   Cloud,
-  Code2,
   Eye,
   EyeOff,
-  FileCheck2,
   HardDrive,
   LoaderCircle,
   LockKeyhole,
-  RefreshCw,
-  Rocket,
   Route,
   ServerCog,
   ShieldCheck,
@@ -33,9 +28,7 @@ import {
 import type { UglinkConfig } from '../../../domain/configuration/model';
 import {
   configsEqual,
-  prettyConfig,
   validateUglinkConfig,
-  type ValidationCheck,
   type ValidationResponse
 } from '../../../domain/configuration/validation';
 import type {
@@ -52,7 +45,7 @@ import { ProviderBadge } from './ProviderBadge';
 import { UnifiedServiceList, validateUnifiedServices } from './UnifiedServiceList';
 import { useServerGateway } from '../lib/use-server-gateway';
 
-type Section = 'services' | 'server' | 'diagnostics' | 'security';
+type Section = 'services' | 'access' | 'server' | 'diagnostics' | 'security';
 
 interface DashboardProps {
   bootstrap: BootstrapResponse;
@@ -69,10 +62,11 @@ interface CloudConfigurationDialogProps {
 }
 
 const SECTION_COPY: Record<Section, { label: string; description: string; group: 'cloudflare' | 'server' | 'common' }> = {
-  services: { label: '服务配置', description: '统一服务列表 · NAS 服务 + Cloudflare/服务器通道', group: 'common' },
-  server: { label: '线路管理', description: '线路 A（Cloudflare）/ B（服务器）连接配置 · 流量与状态', group: 'common' },
-  diagnostics: { label: '故障诊断', description: 'Cloudflare 通道的运行输出、网络日志与操作记录', group: 'cloudflare' },
-  security: { label: '权限与安全', description: '切换网关路线、管理凭据与数据安全', group: 'common' }
+  access: { label: '服务与访问', description: '一个服务一个框 · 框里列出所有访问记录', group: 'common' },
+  services: { label: 'NAS 连接', description: 'UGREENlink ID · 登录凭据 · 验证连接', group: 'common' },
+  server: { label: '线路管理', description: 'Cloudflare 与自建服务的连接配置 · 流量与状态', group: 'common' },
+  diagnostics: { label: '故障诊断', description: 'Cloudflare 路线的运行输出、网络日志与操作记录', group: 'cloudflare' },
+  security: { label: '权限与安全', description: 'Cloudflare 凭据 · 本地配置备份', group: 'common' }
 };
 
 function errorMessage(error: unknown): string {
@@ -121,22 +115,30 @@ function CloudConfigurationDialog({
   );
 }
 
-function CheckIcon({ check }: { check: ValidationCheck }) {
-  if (check.level === 'pass') return <CheckCircle2 className="check-icon check-icon--pass" size={18} />;
-  if (check.level === 'warning') return <TriangleAlert className="check-icon check-icon--warning" size={18} />;
-  if (check.level === 'error') return <AlertCircle className="check-icon check-icon--error" size={18} />;
-  return <Circle className="check-icon" size={18} />;
+interface NasVerificationResult {
+  kind: 'success' | 'error';
+  message: string;
 }
-
 
 interface NasConnectionPanelProps {
   config: UglinkConfig;
   onChange: (config: UglinkConfig) => void;
   password: string;
   setPassword: (password: string) => void;
+  verifying: boolean;
+  verification?: NasVerificationResult;
+  onVerify: () => void;
 }
 
-function NasConnectionPanel({ config, onChange, password, setPassword }: NasConnectionPanelProps) {
+function NasConnectionPanel({
+  config,
+  onChange,
+  password,
+  setPassword,
+  verifying,
+  verification,
+  onVerify
+}: NasConnectionPanelProps) {
   const [passwordVisible, setPasswordVisible] = useState(false);
   return (
     <section className="panel config-panel">
@@ -205,42 +207,64 @@ function NasConnectionPanel({ config, onChange, password, setPassword }: NasConn
           <small>首次发布时必填；以后留空则保留当前密码。</small>
         </label>
       </div>
+      <div className="nas-verify">
+        <button className="button button--primary" type="button" disabled={verifying} onClick={onVerify}>
+          {verifying ? <LoaderCircle className="spin" size={16} /> : null} ✔ 验证连接
+        </button>
+        <span className="muted nas-verify__note">
+          验证会用上面的凭据登录一次绿联 NAS；因绿联有登录保护，请勿频繁点击（每次约间隔 5 分钟）。
+        </span>
+      </div>
+      {verification && (
+        <div className={`verify-result verify-result--${verification.kind}`} role="status">
+          <span className="verify-result__icon">{verification.kind === 'success' ? '✓' : '!'}</span>
+          <div>
+            <strong>{verification.kind === 'success' ? '连接成功' : '连接失败'}</strong>
+            <p>{verification.message}</p>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
 
-interface InspectorProps {
-  validation: ValidationResponse;
-  config: UglinkConfig;
-}
-
-function Inspector({ validation, config }: InspectorProps) {
+function SetupGuide({ onConfigureRoute, onConnectNas }: { onConfigureRoute: () => void; onConnectNas: () => void }) {
   return (
-    <aside className="inspector">
-      <section className="inspector__section">
-        <div className="inspector__heading">
-          <div><p className="eyebrow">配置检查</p><h3>检查结果</h3></div>
-          <span className={`score-badge${validation.valid ? ' score-badge--ok' : ''}`}>
-            {validation.checks.filter((check) => check.level === 'pass').length}/{validation.checks.length}
-          </span>
+    <section className="panel setup-guide">
+      <div className="panel__heading">
+        <div>
+          <p className="eyebrow">首次配置引导</p>
+          <h2>先完成下面两步，再回来添加服务</h2>
+          <p>顺序是：配置访问路线 → 连接绿联 NAS → 添加服务。第 2 步不依赖第 1 步。</p>
         </div>
-        <div className="check-list">
-          {validation.checks.map((check) => (
-            <div className="check-row" key={check.id}>
-              <CheckIcon check={check} />
-              <div><strong>{check.label}</strong><p>{check.detail}</p></div>
-            </div>
-          ))}
+      </div>
+      <div className="setup-guide__steps">
+        <div className="setup-step">
+          <span className="setup-step__num">1</span>
+          <div className="setup-step__txt">
+            <strong>配置访问路线</strong>
+            <p>选择通过 Cloudflare、自建服务，或两者都配置。服务最终走哪条线取决于这里。</p>
+          </div>
+          <button className="button button--secondary button--compact" type="button" onClick={onConfigureRoute}>前往「线路管理」</button>
         </div>
-      </section>
-
-      <section className="inspector__section">
-        <details className="config-preview">
-          <summary><span><Code2 size={16} /> 待发布配置</span><ChevronRight size={16} /></summary>
-          <pre>{prettyConfig(config)}</pre>
-        </details>
-      </section>
-    </aside>
+        <div className="setup-step">
+          <span className="setup-step__num">2</span>
+          <div className="setup-step__txt">
+            <strong>连接绿联 NAS</strong>
+            <p>填写 UGREENlink ID 与登录账号，可用「验证连接」确认凭据有效。此步只连绿联官方接口，不依赖第 1 步。</p>
+          </div>
+          <button className="button button--secondary button--compact" type="button" onClick={onConnectNas}>前往「NAS 连接」</button>
+        </div>
+        <div className="setup-step is-locked">
+          <span className="setup-step__num">3</span>
+          <div className="setup-step__txt">
+            <strong>添加服务</strong>
+            <p>上面两步完成后，这里会变成正常的服务列表，点「添加记录」即可。</p>
+          </div>
+          <span className="setup-step__lock">🔒 待前两步完成</span>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -248,73 +272,43 @@ interface SecurityPageProps {
   bootstrap: BootstrapResponse;
   config: UglinkConfig;
   resetting: boolean;
-  switchingRoute: boolean;
   onReset: () => void;
-  onSwitchRoute: (mode: 'cloudflare' | 'server') => void;
   onRestored: (bootstrap: BootstrapResponse) => void;
 }
 
-function SecurityPage({
-  bootstrap,
-  config,
-  resetting,
-  switchingRoute,
-  onReset,
-  onSwitchRoute,
-  onRestored
-}: SecurityPageProps) {
-  const accessMode = bootstrap.accessMode;
+function SecurityPage({ bootstrap, config, resetting, onReset, onRestored }: SecurityPageProps) {
   const cfConnected = bootstrap.providers.cloudflare.state === 'connected';
   return (
     <div className="section-page">
       <div className="page-heading">
-        <div><p className="eyebrow">凭据与路线管理</p><h1>权限与安全</h1><p>切换网关路线、管理连接凭据与加密备份。</p></div>
+        <div><p className="eyebrow">凭据与数据</p><h1>权限与安全</h1><p>管理 Cloudflare 凭据与本地配置的加密备份。</p></div>
       </div>
       <div className="security-grid">
-        <section className="panel security-card">
-          <span className="security-card__icon security-card__icon--blue"><Route size={21} /></span>
-          <div>
-            <h2>网关路线</h2>
-            <p>当前使用 <strong>{accessMode === 'server' ? '自建服务器网关' : 'Cloudflare 网关'}</strong>。两种路线可随时切换，互不干扰。</p>
-          </div>
-          <div className="route-switch-row">
-            <button
-              className={`button ${accessMode === 'cloudflare' ? 'button--primary' : 'button--secondary'}`}
-              type="button"
-              disabled={switchingRoute || accessMode === 'cloudflare'}
-              onClick={() => onSwitchRoute('cloudflare')}
-            >
-              {switchingRoute ? <LoaderCircle className="spin" size={15} /> : <Cloud size={15} />} Cloudflare 网关
-            </button>
-            <button
-              className={`button ${accessMode === 'server' ? 'button--primary' : 'button--secondary'}`}
-              type="button"
-              disabled={switchingRoute || accessMode === 'server'}
-              onClick={() => onSwitchRoute('server')}
-            >
-              {switchingRoute ? <LoaderCircle className="spin" size={15} /> : <HardDrive size={15} />} 自建服务器网关
-            </button>
-          </div>
-          {accessMode === 'server' && !cfConnected && (
-            <p className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
-              切换到 Cloudflare 后需要填写 Account ID 与 API Token；凭据只在服务端加密保存。
-            </p>
-          )}
-        </section>
         <section className="panel security-card">
           <span className="security-card__icon security-card__icon--orange"><Cloud size={21} /></span>
           <div>
             <h2>Cloudflare 连接</h2>
             <p>{cfConnected
-              ? <>当前 Account ID 尾号 <strong>···{bootstrap.target?.accountIdSuffix}</strong>，用于发布服务并管理访问域名。</>
-              : '当前未连接 Cloudflare，无需填写 Token 即可使用自建服务器网关。'}</p>
+              ? <>当前 Account ID 尾号 <strong>···{bootstrap.target?.accountIdSuffix}</strong>，用于发布走 Cloudflare 路线的服务并管理访问域名。</>
+              : '当前未连接 Cloudflare，可随时连接后发布走 Cloudflare 路线的服务。'}</p>
           </div>
           <ProviderBadge status={bootstrap.providers.cloudflare} full />
           <div className="security-card__actions">
-            <button className="button button--secondary" type="button" disabled={resetting || switchingRoute} onClick={onReset}>
-              {resetting ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />} {cfConnected ? '重新配置 API Token' : '连接 Cloudflare'}
-            </button>
+            {cfConnected ? (
+              <button className="button button--ghost" type="button" disabled={resetting} onClick={onReset}>
+                {resetting ? <LoaderCircle className="spin" size={15} /> : <Cloud size={15} />} 断开 Cloudflare
+              </button>
+            ) : (
+              <button className="button button--secondary" type="button" disabled={resetting} onClick={onReset}>
+                {resetting ? <LoaderCircle className="spin" size={15} /> : <Cloud size={15} />} 连接 Cloudflare
+              </button>
+            )}
           </div>
+          {cfConnected && (
+            <p className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+              Token 只在服务端加密保存。需要更换凭据请到「线路管理」点重新配置，这里只做断开。
+            </p>
+          )}
         </section>
         <DataManagement
           csrfToken={bootstrap.csrfToken}
@@ -338,11 +332,13 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
     };
   }, [bootstrap.configuration]);
   const initialHasPublishedServices = initialConfiguration.deployed.services.some((service) => service.enabled !== false);
-  const [section, setSection] = useState<Section>('services');
+  const [section, setSection] = useState<Section>('access');
   const [config, setConfig] = useState<UglinkConfig>(() => initialConfiguration.config);
   const [savedConfig, setSavedConfig] = useState<UglinkConfig>(() => initialConfiguration.deployed);
   const [password, setPassword] = useState('');
-  const [validation, setValidation] = useState<ValidationResponse>(() => validateUglinkConfig(initialConfiguration.config));
+  const [verifying, setVerifying] = useState(false);
+  const [verification, setVerification] = useState<NasVerificationResult>();
+  const [saving, setSaving] = useState(false);
   const [job, setJob] = useState<DeploymentJob>();
   const [showDeploymentOverlay, setShowDeploymentOverlay] = useState(false);
   const [deploymentError, setDeploymentError] = useState<string>();
@@ -358,9 +354,8 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [diagnosticsError, setDiagnosticsError] = useState<string>();
   const [focusedHostname, setFocusedHostname] = useState<string>();
-  const [busy, setBusy] = useState<'validate' | 'deploy'>();
+  const [busy, setBusy] = useState<'deploy'>();
   const [resettingConnection, setResettingConnection] = useState(false);
-  const [switchingRoute, setSwitchingRoute] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string }>();
   const [cloudConfiguration, setCloudConfiguration] = useState(bootstrap.cloudConfiguration);
   const [cloudConfigurationBusy, setCloudConfigurationBusy] = useState<'import' | 'dismiss'>();
@@ -490,11 +485,7 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
     if (job.phase === 'healthy' || job.phase === 'failed') void loadDiagnostics(false);
   }, [deploymentConfig, job, loadDiagnostics]);
 
-  const localValidation = useMemo(
-    () => validateUglinkConfig(config),
-    [config]
-  );
-  const visibleValidation = validation || localValidation;
+  const visibleValidation = useMemo(() => validateUglinkConfig(config), [config]);
   const hasConfigChanges = !configsEqual(config, savedConfig);
   const hasChanges = hasConfigChanges || password.length > 0;
   const server = useServerGateway(bootstrap.csrfToken);
@@ -503,35 +494,38 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
     [config, server.mappings]
   );
   const serverBlocked = unifiedIssues.serverChannelErrors.size > 0 || unifiedIssues.groupErrors.size > 0;
-  const cfBlocked = !localValidation.valid || unifiedIssues.cfChannelErrors.size > 0;
+  const showSetupGuide = !hasPublishedServices && !target && !server.connected;
 
   const changeConfig = (nextConfig: UglinkConfig) => {
     setConfig(nextConfig);
-    setValidation(validateUglinkConfig(nextConfig));
   };
 
-  const validate = async (): Promise<ValidationResponse | undefined> => {
-    setBusy('validate');
-    setNotice(undefined);
+  const verifyNas = async () => {
+    const id = config.uglink.id.trim();
+    const username = config.uglink.username.trim();
+    if (!id || !username) {
+      setVerification({ kind: 'error', message: '请先填写 UGREENlink ID 和登录用户名。' });
+      return;
+    }
+    if (!password.trim()) {
+      setVerification({ kind: 'error', message: '需要先填密码才能验证连接。' });
+      return;
+    }
+    setVerifying(true);
+    setVerification(undefined);
     try {
-      const result = await apiPost<ValidationResponse>('/api/validate', bootstrap.csrfToken, { config });
-      setValidation(result);
-      setNotice({
-        type: result.valid ? 'success' : 'error',
-        message: result.valid ? '配置已通过服务器校验。' : '配置仍有需要修正的项目。'
-      });
-      return result;
+      await apiPost<{ ok: true }>('/api/nas/verify', bootstrap.csrfToken, { id, username, password });
+      setVerification({ kind: 'success', message: '连接成功，已用该账号完成绿联登录握手，凭据有效。' });
     } catch (error) {
-      setNotice({ type: 'error', message: errorMessage(error) });
-      return undefined;
+      setVerification({ kind: 'error', message: errorMessage(error) });
     } finally {
-      setBusy(undefined);
+      setVerifying(false);
     }
   };
 
-  const deployConfiguration = async (nextConfig: UglinkConfig, mode: DeploymentMode) => {
-    if (busy === 'deploy' || showDeploymentOverlay) return;
-    if (mode === 'publish' && !hasChanges) return;
+  const deployConfiguration = async (nextConfig: UglinkConfig, mode: DeploymentMode): Promise<boolean> => {
+    if (busy === 'deploy' || showDeploymentOverlay) return false;
+    if (mode === 'publish' && !hasChanges) return true;
     setDeploymentError(undefined);
     if (mode === 'overwrite') setShowDeploymentOverlay(true);
     healthRequestVersion.current += 1;
@@ -548,11 +542,10 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
     setNotice(undefined);
     try {
       const checked = await apiPost<ValidationResponse>('/api/validate', bootstrap.csrfToken, { config: nextConfig });
-      setValidation(checked);
       if (!checked.valid) {
         setDeploymentError('配置检查未通过，尚未发布任何修改。');
         setNotice({ type: 'error', message: '配置检查未通过，尚未发布任何修改。' });
-        return;
+        return false;
       }
       const created = await apiPost<DeploymentJob>('/api/deploy', bootstrap.csrfToken, {
         config: nextConfig,
@@ -566,17 +559,18 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
       void loadDiagnostics(false);
       if (created.phase === 'failed') {
         setNotice({ type: 'error', message: created.message });
-      } else {
-        if (mode === 'publish') {
-          if (!configsEqual(nextConfig, savedConfig)) skipNextPublishedHealthCheck.current = true;
-          setSavedConfig(nextConfig);
-          setPassword('');
-        }
-        setNotice({ type: 'success', message: mode === 'overwrite' ? '覆盖部署已开始。' : '发布已开始。' });
+        return false;
       }
+      if (mode === 'publish') {
+        if (!configsEqual(nextConfig, savedConfig)) skipNextPublishedHealthCheck.current = true;
+        setSavedConfig(nextConfig);
+        setPassword('');
+      }
+      return true;
     } catch (error) {
       setDeploymentError(`无法确认部署结果：${errorMessage(error)}。请检查诊断后再操作。`);
       setNotice({ type: 'error', message: errorMessage(error) });
+      return false;
     } finally {
       setBusy(undefined);
     }
@@ -595,8 +589,32 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
   const reset = () => {
     setConfig(savedConfig);
     setPassword('');
-    setValidation(validateUglinkConfig(savedConfig));
+    server.resetMappings();
     setNotice({ type: 'success', message: '未发布的本地修改已撤销。' });
+  };
+
+  const saveAll = async () => {
+    if (saving || busy || server.busy === 'push') return;
+    if (unifiedIssues.hasErrors || !visibleValidation.valid) {
+      setNotice({ type: 'error', message: '配置需要修正，暂不能保存。' });
+      return;
+    }
+    setSaving(true);
+    let saved = true;
+    try {
+      if (target && hasChanges) saved = await deployConfiguration(config, 'publish');
+      if (saved && server.dirty) {
+        if (!server.connected || serverBlocked) {
+          setNotice({ type: 'error', message: '自建服务线路未就绪或存在待修正项，暂不能同步。' });
+          saved = false;
+        } else {
+          saved = await server.push();
+        }
+      }
+      if (saved) setNotice({ type: 'success', message: '已保存' });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const resetConnection = async () => {
@@ -608,23 +626,6 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
     } catch (error) {
       setNotice({ type: 'error', message: errorMessage(error) });
       setResettingConnection(false);
-    }
-  };
-
-  const switchRoute = async (mode: 'cloudflare' | 'server') => {
-    if (mode === accessMode || switchingRoute) return;
-    if (mode === 'cloudflare' && !target) {
-      const confirmed = window.confirm('切换到 Cloudflare 网关需要填写 Account ID 与 API Token，是否继续？');
-      if (!confirmed) return;
-    }
-    setSwitchingRoute(true);
-    setNotice(undefined);
-    try {
-      await apiPost<BootstrapResponse>('/api/connections/mode', bootstrap.csrfToken, { accessMode: mode });
-      onConnectionReset();
-    } catch (error) {
-      setNotice({ type: 'error', message: errorMessage(error) });
-      setSwitchingRoute(false);
     }
   };
 
@@ -640,7 +641,6 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
       if (!snapshot) throw new Error('Cloudflare 配置导入后没有返回配置。');
       setSavedConfig(snapshot.deployed);
       setConfig(snapshot.draft || snapshot.deployed);
-      setValidation(validateUglinkConfig(snapshot.draft || snapshot.deployed));
       setCloudConfiguration(undefined);
       setNotice({ type: 'success', message: 'Cloudflare 已发布配置已导入。' });
     } catch (error) {
@@ -665,8 +665,9 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
   };
 
   const allNavItems: Array<{ id: Section; icon: typeof ServerCog }> = [
-    { id: 'services', icon: ServerCog },
-    { id: 'server', icon: HardDrive },
+    { id: 'access', icon: ServerCog },
+    { id: 'services', icon: HardDrive },
+    { id: 'server', icon: Route },
     { id: 'diagnostics', icon: TriangleAlert },
     { id: 'security', icon: ShieldCheck }
   ];
@@ -674,7 +675,7 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
   // user never sees empty/broken CF screens. The unified service list, route
   // management and security always remain.
   const navItems = isServerMode
-    ? allNavItems.filter((item) => item.id === 'services' || item.id === 'server' || item.id === 'security')
+    ? allNavItems.filter((item) => item.id === 'access' || item.id === 'server' || item.id === 'security')
     : allNavItems;
   const currentErrorCount = (publishedHealth?.services.filter((service) => !service.healthy).length || 0)
     + (healthCheckError ? 1 : 0);
@@ -686,7 +687,7 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
         <div className="app-header__context">
           {target
             ? <><span>{target.accountName}</span><ChevronRight size={14} /><strong>{target.workerName}</strong></>
-            : <><span>自建路线</span><ChevronRight size={14} /><strong>服务器网关</strong></>}
+            : <><span>自建服务</span><ChevronRight size={14} /><strong>网关</strong></>}
         </div>
         <div className="app-header__providers">
           <ProviderBadge status={bootstrap.providers.cloudflare} />
@@ -717,32 +718,29 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
             <p className="eyebrow">{target ? '发布目标' : '当前路线'}</p>
             {target
               ? <><div><span className="health-dot health-dot--ok" /><strong>{target.workerName}</strong></div><small>Account ID ···{target.accountIdSuffix}</small></>
-              : <><div><span className="health-dot health-dot--ok" /><strong>自建服务器网关</strong></div><small>IP:端口直连 · 无需域名</small></>}
+              : <><div><span className="health-dot health-dot--ok" /><strong>自建服务网关</strong></div><small>IP:端口直连 · 无需域名</small></>}
           </div>
         </aside>
 
-        <main className={`app-main${section === 'services' ? ' app-main--editor' : ''}`}>
-          {section === 'services' ? (
-            <>
-              <div className="editor-main">
-                <div className="page-heading page-heading--compact">
-                  <div>
-                    <p className="eyebrow">统一服务列表</p>
-                    <h1>服务配置</h1>
-                    <p>一行一个 NAS 服务；展开后管理它的 Cloudflare（A）与服务器（B）访问通道。修改先进草稿，保存时分别发布。</p>
-                  </div>
-                  <span className={`dirty-state${hasChanges || server.dirty ? ' dirty-state--changed' : ''}`}>
-                    <span />{hasChanges || server.dirty ? '有未保存修改' : '当前无修改'}
-                  </span>
+        <main className="app-main">
+          {section === 'access' ? (
+            <div className="section-page">
+              <div className="page-heading page-heading--compact">
+                <div>
+                  <p className="eyebrow">统一服务列表</p>
+                  <h1>服务与访问</h1>
+                  <p>每个服务一个框，框里列出它的所有访问记录；编辑后点底部「保存更改」统一发布。</p>
                 </div>
-                {target && (
-                  <NasConnectionPanel
-                    config={config}
-                    onChange={changeConfig}
-                    password={password}
-                    setPassword={setPassword}
-                  />
-                )}
+                <span className={`dirty-state${hasChanges || server.dirty ? ' dirty-state--changed' : ''}`}>
+                  <span />{hasChanges || server.dirty ? '有未保存修改' : '已保存'}
+                </span>
+              </div>
+              {showSetupGuide ? (
+                <SetupGuide
+                  onConfigureRoute={() => setSection('server')}
+                  onConnectNas={() => setSection('services')}
+                />
+              ) : (
                 <UnifiedServiceList
                   config={config}
                   onConfigChange={changeConfig}
@@ -758,9 +756,27 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
                   healthCheckError={healthCheckError}
                   onInspectService={inspectService}
                 />
+              )}
+            </div>
+          ) : section === 'services' ? (
+            <div className="section-page">
+              <div className="page-heading">
+                <div>
+                  <p className="eyebrow">NAS 连接</p>
+                  <h1>NAS 连接信息</h1>
+                  <p>用于连接绿联云中的 NAS 服务（两条访问路线共用同一台 NAS）。</p>
+                </div>
               </div>
-              {target && <Inspector validation={visibleValidation} config={config} />}
-            </>
+              <NasConnectionPanel
+                config={config}
+                onChange={changeConfig}
+                password={password}
+                setPassword={setPassword}
+                verifying={verifying}
+                verification={verification}
+                onVerify={() => void verifyNas()}
+              />
+            </div>
           ) : section === 'server' ? (
             <RouteManagerPanel
               csrfToken={bootstrap.csrfToken}
@@ -791,41 +807,36 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
               bootstrap={bootstrap}
               config={config}
               resetting={resettingConnection}
-              switchingRoute={switchingRoute}
               onReset={() => void resetConnection()}
-              onSwitchRoute={(mode) => void switchRoute(mode)}
               onRestored={() => window.location.reload()}
             />
           ) : null}
         </main>
       </div>
 
-      {section === 'services' && (
+      {section === 'access' && (
         <footer className="action-bar">
           <div className="action-bar__status">
             {visibleValidation.valid && !unifiedIssues.hasErrors ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-            <span><strong>{visibleValidation.valid && !unifiedIssues.hasErrors ? '配置可以保存' : '配置需要修正'}</strong><small>{hasChanges || server.dirty ? 'A 路线发布到 Cloudflare，B 路线同步到服务器' : '当前没有待保存修改'}</small></span>
+            <span>
+              <strong>{visibleValidation.valid && !unifiedIssues.hasErrors ? '配置就绪' : '配置需要修正'}</strong>
+              <small>点保存后：有改动的记录自动发布到 Cloudflare / 同步到自建服务网关</small>
+            </span>
           </div>
           <div className="action-bar__buttons">
-            {target && (
-              <>
-                <button className="button button--ghost" type="button" onClick={reset} disabled={!hasChanges || Boolean(busy)}><RefreshCw size={15} /> 撤销</button>
-                <button className="button button--secondary" type="button" onClick={() => void validate()} disabled={Boolean(busy)}>
-                  {busy === 'validate' ? <LoaderCircle className="spin" size={16} /> : <FileCheck2 size={16} />} 检查配置
-                </button>
-                <button className="button button--primary" type="button" onClick={() => void deployConfiguration(config, 'publish')} disabled={!hasChanges || cfBlocked || Boolean(busy)}>
-                  {busy === 'deploy' ? <LoaderCircle className="spin" size={16} /> : <Rocket size={16} />} 发布更改 · CF
-                </button>
-              </>
-            )}
             <button
-              className={target ? 'button button--secondary' : 'button button--primary'}
+              className="button button--ghost"
               type="button"
-              onClick={() => void server.push()}
-              disabled={!server.connected || !server.dirty || serverBlocked || server.busy === 'push'}
-              title={serverBlocked ? '列表存在待修正项，修正后才能同步' : !server.connected ? '请先到线路管理配置线路 B' : undefined}
+              onClick={reset}
+              disabled={(!hasChanges && !server.dirty) || saving || Boolean(busy)}
+            >↺ 放弃修改</button>
+            <button
+              className="button button--primary"
+              type="button"
+              onClick={() => void saveAll()}
+              disabled={saving || Boolean(busy) || server.busy === 'push'}
             >
-              {server.busy === 'push' ? <LoaderCircle className="spin" size={16} /> : <HardDrive size={16} />} 同步到服务器
+              {saving || busy ? <LoaderCircle className="spin" size={16} /> : null} 💾 保存更改
             </button>
           </div>
         </footer>

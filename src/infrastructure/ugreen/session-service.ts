@@ -12,6 +12,9 @@ const TICKET_REUSE_TTL_SECONDS = 1800;
 const CACHE_TTL_SECONDS = 3600;
 const DISCOVERY_TTL_SECONDS = 300;
 const AUTH_ATTEMPT_TTL_SECONDS = 300;
+/** While another issuance is in flight, wait briefly and retry instead of failing fast. */
+const AUTH_ATTEMPT_WAIT_MS = 2500;
+const AUTH_ATTEMPT_WAIT_RETRIES = 4;
 const DEFAULT_AUTH_FAILURE_TTL_SECONDS = 600;
 const LOCKED_AUTH_FAILURE_TTL_SECONDS = 1800;
 const BLOCKED_AUTH_FAILURE_TTL_SECONDS = 3600;
@@ -37,6 +40,12 @@ const UGLINK_ID = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
 export interface SessionCache {
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
+  /**
+   * Atomic "set only if the key does not exist" used by the issuance lock.
+   * Returns true when the key was written, false when it already existed.
+   * Optional: caches without atomic semantics fall back to put-then-verify.
+   */
+  putIfAbsent?(key: string, value: string, options?: { expirationTtl?: number }): Promise<boolean>;
   delete(key: string): Promise<void>;
 }
 
@@ -57,6 +66,11 @@ type LoginData =
 type LoginExchange = {
   data: LoginData;
   cookies: ResponseCookie[];
+};
+
+type LoginAttempt = LoginExchange & {
+  identity: ClientIdentity;
+  clientProfile: ClientProfile;
 };
 
 type AuthenticatedRedirect = {
@@ -491,17 +505,33 @@ async function cacheAuthenticationFailure(
   });
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function reserveAuthenticationAttempt(runtime: UgreenSessionRuntime): Promise<string> {
   const recentFailure = await readRecentAuthFailure(runtime);
   if (recentFailure) throw recentFailure;
 
   const key = authAttemptKey(runtime.sessionNamespace);
-  if (await runtime.cache.get(key)) throw new ProxyAuthenticationError('backoff');
-
-  const attemptId = crypto.randomUUID();
   const ttl = runtime.ticketThrottleSeconds && runtime.ticketThrottleSeconds > 0
     ? runtime.ticketThrottleSeconds
     : AUTH_ATTEMPT_TTL_SECONDS;
+  // Another issuance may be in flight; wait for it to finish instead of failing immediately.
+  // If the other attempt completes and released the lock, our retry proceeds normally.
+  for (let retry = 0; ; retry += 1) {
+    if (!(await runtime.cache.get(key))) break;
+    if (retry >= AUTH_ATTEMPT_WAIT_RETRIES) throw new ProxyAuthenticationError('backoff');
+    await sleep(AUTH_ATTEMPT_WAIT_MS);
+  }
+  const attemptId = crypto.randomUUID();
+  // Atomic caches (memory / SQLite) acquire the lock in one step; caches without
+  // atomic semantics (Workers KV) fall back to put-then-verify.
+  if (runtime.cache.putIfAbsent) {
+    const acquired = await runtime.cache.putIfAbsent(key, attemptId, { expirationTtl: ttl });
+    if (!acquired) throw new ProxyAuthenticationError('backoff');
+    return attemptId;
+  }
   await runtime.cache.put(key, attemptId, { expirationTtl: ttl });
   if (await runtime.cache.get(key) !== attemptId) {
     throw new ProxyAuthenticationError('backoff');
@@ -713,23 +743,11 @@ async function getDiscoveredOrigin(
   return { origin, cached: false };
 }
 
-async function authenticateAtOrigin(
+/** Runs the official client's verify/check + verify/login exchange. */
+async function performLogin(
   runtime: UgreenSessionRuntime,
-  port: string,
   loginOrigin: string
-): Promise<ProxySession>;
-async function authenticateAtOrigin(
-  runtime: UgreenSessionRuntime,
-  port: string,
-  loginOrigin: string,
-  ticketOnly: true
-): Promise<AuthenticatedRedirect>;
-async function authenticateAtOrigin(
-  runtime: UgreenSessionRuntime,
-  port: string,
-  loginOrigin: string,
-  ticketOnly = false
-): Promise<ProxySession | AuthenticatedRedirect> {
+): Promise<LoginAttempt> {
   // The official web client loads its version metadata before the user submits
   // the login form, then performs verify/check with a native browser fetch.
   const clientProfile = await loadClientProfile(loginOrigin);
@@ -817,16 +835,37 @@ async function authenticateAtOrigin(
     throw new ProxyAuthenticationError('unavailable');
   }
   logAuthPhase('verify_login', 'ok', loginStartedAt);
-  const loginData = loginExchange.data;
   console.log(JSON.stringify({
     event: 'ugreen_login_context',
     responseCookieCount: loginExchange.cookies.length
   }));
+  return { ...loginExchange, identity, clientProfile };
+}
+
+async function authenticateAtOrigin(
+  runtime: UgreenSessionRuntime,
+  port: string,
+  loginOrigin: string
+): Promise<ProxySession>;
+async function authenticateAtOrigin(
+  runtime: UgreenSessionRuntime,
+  port: string,
+  loginOrigin: string,
+  ticketOnly: true
+): Promise<AuthenticatedRedirect>;
+async function authenticateAtOrigin(
+  runtime: UgreenSessionRuntime,
+  port: string,
+  loginOrigin: string,
+  ticketOnly = false
+): Promise<ProxySession | AuthenticatedRedirect> {
+  const { data: loginData, cookies: loginCookies, identity, clientProfile } = await performLogin(runtime, loginOrigin);
+  const commonHeaders = clientHeaders(identity, clientProfile, loginOrigin);
 
   const dockerTokenUrl = new URL(`${loginOrigin}/ugreen/v1/gateway/proxy/dockerToken`);
   dockerTokenUrl.searchParams.set('port', port);
   const dockerTokenHeaders = new Headers(commonHeaders);
-  const dockerTokenCookie = cookieHeaderForUrl(loginExchange.cookies, dockerTokenUrl.toString());
+  const dockerTokenCookie = cookieHeaderForUrl(loginCookies, dockerTokenUrl.toString());
   if (dockerTokenCookie) {
     dockerTokenHeaders.set('Cookie', dockerTokenCookie);
   }
@@ -890,7 +929,7 @@ async function authenticateAtOrigin(
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           Referer: `${loginOrigin}/desktop/`
         });
-        const redirectCookie = cookieHeaderForUrl(loginExchange.cookies, redirectUrl);
+        const redirectCookie = cookieHeaderForUrl(loginCookies, redirectUrl);
         if (redirectCookie) {
           redirectHeaders.set('Cookie', redirectCookie);
         }
@@ -1086,6 +1125,16 @@ async function withAuthenticatedDiscovery<T>(
     }
     throw error;
   }
+}
+
+/**
+ * One-off credential check: discover the origin and finish the login exchange.
+ * No docker token, relay handshake or session cache is involved.
+ */
+export async function verifyUgreenCredentials(runtime: UgreenSessionRuntime): Promise<void> {
+  await withAuthenticatedDiscovery(runtime, false, async (loginOrigin) => {
+    await performLogin(runtime, loginOrigin);
+  });
 }
 
 export async function createProxySession(

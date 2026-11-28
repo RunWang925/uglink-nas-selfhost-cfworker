@@ -32,12 +32,14 @@ const TICKET_ERROR_MESSAGES: Record<string, string> = {
   login_source_blocked: '当前登录来源被 NAS 限制。',
   account_blocked: 'NAS 账号暂时无法登录。',
   password_expired: 'NAS 登录密码已经过期。',
-  otp_required: '当前账号启用了二次验证，暂不支持票据模式。',
-  authentication_backoff: '最近已有登录尝试，请稍后再试。',
+  otp_required: '当前账号启用了二次验证，暂不支持绿联跳转模式。',
+  authentication_backoff: '另一位访问者正在登录绿联，页面会自动重试，无需手动刷新。',
   authentication_timeout: '登录 NAS 超时，请稍后再试。',
   authentication_unavailable: '暂时无法连接 NAS，请稍后再试。',
   authentication_failed: '登录 NAS 失败，请稍后再试。'
 };
+const TICKET_RETRY_MAX = 20;
+const TICKET_RETRY_DELAY_SECONDS = 15;
 
 export interface GatewayRuntime {
   serviceMap: string;
@@ -102,12 +104,21 @@ function ticketPage(
   hostname: string,
   error?: string,
   status = 200,
-  options: { force?: boolean } = {}
+  options: {
+    force?: boolean;
+    autoRetry?: { attempt: number; max: number; delaySeconds: number };
+  } = {}
 ): Response {
   const message = error
     ? `<p class="error" role="alert">${escapeHtml(error)}</p>`
     : '';
-  const action = options.force ? `${TICKET_PATH}?force=1` : TICKET_PATH;
+  const autoRetry = options.autoRetry;
+  const action = autoRetry
+    ? `${TICKET_PATH}?retry=${autoRetry.attempt}`
+    : options.force ? `${TICKET_PATH}?force=1` : TICKET_PATH;
+  const retryHint = autoRetry
+    ? `<p class="retry-status" id="retry-status" role="status">另一位访问者正在登录绿联，约 <span id="retry-countdown">${autoRetry.delaySeconds}</span> 秒后自动重试（第 ${autoRetry.attempt}/${autoRetry.max} 次），无需手动刷新。</p>`
+    : '';
   return htmlResponse(request, `<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -128,15 +139,17 @@ function ticketPage(
     button:hover { background: #1d4ed8; }
     .hint { margin-bottom: 0; font-size: 13px; }
     .error { padding: 12px 14px; border-radius: 12px; color: #9f2d20; background: #fff1ee; font-size: 14px; }
+    .retry-status { padding: 12px 14px; border-radius: 12px; color: #1d4ed8; background: #eff5ff; font-size: 14px; }
   </style>
 </head>
 <body>
   <main>
     <p class="eyebrow">UGLINK WORKER</p>
     <h1>打开 NAS 服务</h1>
-    <p><strong>${escapeHtml(hostname)}</strong> 是票据入口。点击后会签发一次性登录链接，并跳转到绿联中继域名。</p>
+    <p><strong>${escapeHtml(hostname)}</strong> 使用绿联跳转。点击后会签发一次性登录链接，并跳转到绿联中继域名。</p>
     ${message}
-    <form method="post" action="${action}" id="ticket-form">
+    ${retryHint}
+    <form method="post" action="${action}" id="ticket-form"${autoRetry ? ` data-auto-retry-delay="${autoRetry.delaySeconds}" data-auto-retry-attempt="${autoRetry.attempt}" data-auto-retry-max="${autoRetry.max}"` : ''}>
       <button type="submit">打开服务</button>
     </form>
     <p class="hint">同一设备 ${REUSE_TTL_DISPLAY} 内重复打开会直接复用跳转，无需重新登录；换设备或链接失效时点此<a href="/?force=1">强制重新签发</a>。</p>
@@ -151,6 +164,28 @@ function ticketFailureResponse(request: Request, hostname: string, error: unknow
   const message = TICKET_ERROR_MESSAGES[code] ?? '暂时无法签发登录链接，请稍后再试。';
   const response = ticketPage(request, hostname, message, 502);
   response.headers.set('X-UGLINK-Error', code);
+  return response;
+}
+
+function ticketBackoffResponse(
+  request: Request,
+  hostname: string,
+  attempt: number
+): Response {
+  const response = ticketPage(
+    request,
+    hostname,
+    TICKET_ERROR_MESSAGES.authentication_backoff,
+    503,
+    {
+      autoRetry: {
+        attempt,
+        max: TICKET_RETRY_MAX,
+        delaySeconds: TICKET_RETRY_DELAY_SECONDS
+      }
+    }
+  );
+  response.headers.set('X-UGLINK-Error', 'authentication_backoff');
   return response;
 }
 
@@ -186,7 +221,12 @@ async function ticketIssuanceResponse(
   }
 
   const { id: visitorId } = visitorIdFor(request);
-  const force = new URL(request.url).searchParams.has('force');
+  const url = new URL(request.url);
+  const force = url.searchParams.has('force');
+  const retryAttemptRaw = Number(url.searchParams.get('retry') ?? '0');
+  const retryAttempt = Number.isFinite(retryAttemptRaw) && retryAttemptRaw > 0
+    ? Math.floor(retryAttemptRaw)
+    : 0;
   try {
     if (!force) {
       const cached = await dependencies.ticketReuse.get(visitorId, route.port);
@@ -203,8 +243,15 @@ async function ticketIssuanceResponse(
       event: 'ticket_issue_failed',
       hostname,
       port: route.port,
+      attempt: retryAttempt,
       error: error instanceof Error ? error.message : String(error)
     });
+    // Backoff pages auto-retry so the visitor does not need to refresh manually.
+    if (proxyFailureCode(error) === 'authentication_backoff' && retryAttempt < TICKET_RETRY_MAX) {
+      const response = ticketBackoffResponse(request, hostname, retryAttempt + 1);
+      response.headers.set('Set-Cookie', visitorCookie(request, visitorId));
+      return response;
+    }
     const response = ticketFailureResponse(request, hostname, error);
     response.headers.set('Set-Cookie', visitorCookie(request, visitorId));
     return response;
@@ -287,10 +334,28 @@ export async function handleGatewayRequest(
       }
       return new Response(request.method === 'HEAD' ? null : [
         '// Auto-submit the ticket form so visitors land directly on the relay.',
-        '// Error pages include a .error element and skip auto-submission.',
+        '// Error pages include a .error element and skip auto-submission,',
+        '// except backoff pages marked with data-auto-retry-delay: those show a',
+        '// countdown and resubmit automatically while the throttle window passes.',
+        'var form = document.getElementById("ticket-form");',
         'if (!document.querySelector(".error")) {',
-        '  var form = document.getElementById("ticket-form");',
         '  if (form) form.submit();',
+        '} else if (form && form.dataset.autoRetryDelay) {',
+        '  var delay = parseInt(form.dataset.autoRetryDelay, 10) || 15;',
+        '  var attempt = parseInt(form.dataset.autoRetryAttempt, 10) || 1;',
+        '  var max = parseInt(form.dataset.autoRetryMax, 10) || 20;',
+        '  var status = document.getElementById("retry-status");',
+        '  var counter = document.getElementById("retry-countdown");',
+        '  if (attempt > max) {',
+        '    if (status) status.textContent = "多次自动重试仍未成功，请稍后手动点击下方按钮再试。";',
+        '  } else {',
+        '    var left = delay;',
+        '    var timer = setInterval(function () {',
+        '      left -= 1;',
+        '      if (counter) counter.textContent = String(Math.max(left, 0));',
+        '      if (left <= 0) { clearInterval(timer); form.submit(); }',
+        '    }, 1000);',
+        '  }',
         '}'
       ].join('\n'), {
         status: 200,

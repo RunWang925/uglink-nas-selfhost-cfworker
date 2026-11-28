@@ -3967,15 +3967,15 @@ select:focus {
 }
 
 .route-badge--cf {
-  color: #0c447c;
-  background: #e6f1fb;
-  border: 0.5px solid #b5d4f4;
+  color: #c95a0a;
+  background: #fdf1e7;
+  border: 0.5px solid #f0cfad;
 }
 
 .route-badge--server {
-  color: #085041;
-  background: #e1f5ee;
-  border: 0.5px solid #9fe1cb;
+  color: #185fa5;
+  background: #e3eefc;
+  border: 0.5px solid #b9d2ec;
 }
 
 .unified-service__body {
@@ -4087,12 +4087,45 @@ select:focus {
   margin-top: 12px;
 }
 
-/* ---- Route manager cards ---- */
-.route-grid {
+/* ---- Route manager cards (线路管理) ---- */
+.route-manager-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
   gap: 14px;
   margin-bottom: 16px;
+}
+
+.route-manager-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.route-manager-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.route-manager-card__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 620;
+  color: var(--ink, #2a3140);
+}
+
+.route-manager-card__detail {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted, #6a7482);
+}
+
+.route-manager-card .route-card__fields {
+  margin-top: 2px;
 }
 
 .route-card__meta {
@@ -4133,5 +4166,537 @@ select:focus {
 
   .unified-service__head .service-status {
     margin-left: 0;
+  }
+}
+
+/* ---- Service & access: one box per NAS port, flat record rows ---- */
+.services-panel {
+  padding-bottom: 16px;
+}
+
+.services-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.search-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 230px;
+  height: 38px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--muted);
+  background: #fff;
+}
+
+.search-field:focus-within {
+  border-color: var(--navy);
+}
+
+.search-field input {
+  height: 34px;
+  border: 0;
+  padding: 0;
+  font-size: 12px;
+  box-shadow: none;
+  outline: none;
+}
+
+.button--compact {
+  min-height: 32px;
+  padding: 0 11px;
+  font-size: 12px;
+}
+
+.svc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px 4px;
+}
+
+.svc-box {
+  border: 1px solid var(--border);
+  border-left: 3px solid #185fa5;
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.svc-box:nth-child(3n + 2) {
+  border-left-color: #0f8a63;
+}
+
+.svc-box:nth-child(3n) {
+  border-left-color: #7a4fb0;
+}
+
+.svc-box--draft {
+  border: 1.5px dashed #d9a406;
+  border-left-width: 1.5px;
+  background: #fffdf3;
+}
+
+.svc-box__rows {
+  padding: 12px 14px 2px;
+}
+
+.entry-row {
+  padding-bottom: 12px;
+}
+
+.entry-row + .entry-row {
+  border-top: 1px dashed var(--border);
+  padding-top: 12px;
+}
+
+.entry-grid {
+  display: grid;
+  grid-template-columns: 28px 100px 88px 96px 220px 132px minmax(150px, auto);
+  align-items: end;
+  gap: 10px;
+}
+
+.row-view {
+  align-items: center;
+}
+
+.seq-tag {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  padding: 0 4px;
+  color: #5a6b82;
+  background: #eef2f8;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.seq-tag--draft {
+  color: #8a5a00;
+  background: #fdf3d0;
+}
+
+.view-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.port-chip {
+  display: inline-flex;
+  width: 88px;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--muted);
+  background: #f1f4f9;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.entry-grid .route-badge {
+  width: 96px;
+  justify-content: center;
+  font-size: 11px;
+}
+
+.addr-slot {
+  display: flex;
+  width: 220px;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+}
+
+.addr-slot--stack {
+  flex-direction: column;
+  gap: 2px;
+}
+
+.addr-chip {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px dashed #b9d2ec;
+  border-radius: 6px;
+  padding: 5px 8px;
+  color: #185fa5;
+  background: #f4f8fd;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+a.addr-chip:hover {
+  text-decoration: underline;
+}
+
+.addr-chip--domain {
+  color: #0f8a63;
+  background: #f0faf5;
+  border-color: #b5dfcd;
+}
+
+.mode-chip {
+  display: inline-flex;
+  width: 132px;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: #5a6b82;
+  background: #f1f4f9;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.cell-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.row-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.edit-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.edit-field > span:first-child {
+  white-space: nowrap;
+}
+
+.edit-field input,
+.edit-field select {
+  width: 100%;
+  height: 36px;
+  border-radius: 7px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.edit-field input:disabled {
+  color: var(--muted);
+  background: #f1f4f9;
+}
+
+.cell-name {
+  width: 100px;
+}
+
+.cell-port {
+  width: 88px;
+}
+
+.cell-route {
+  width: 96px;
+}
+
+.cell-address {
+  width: 220px;
+  min-width: 0;
+}
+
+.address-split {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.field-ip {
+  flex: 0 0 92px;
+}
+
+.field-listen {
+  flex: 1;
+  min-width: 80px;
+}
+
+.ip-chip {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  overflow: hidden;
+  border-radius: 7px;
+  padding: 0 8px;
+  color: #185fa5;
+  background: #e3eefc;
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-mode {
+  width: 132px;
+}
+
+.entry-select {
+  height: 36px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  padding: 0 6px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.cfg-line {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.domain-h {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.domain-h input,
+.domain-inline {
+  height: 34px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  padding: 0 10px;
+  font-size: 12px;
+  outline: none;
+}
+
+.domain-inline {
+  width: 300px;
+  max-width: 100%;
+  color: var(--ink);
+  background: #fafff6;
+  border-color: #cfe3d8;
+}
+
+.domain-inline:focus {
+  border-color: #0f8a63;
+  background: #fff;
+}
+
+.domain-sub {
+  display: flex;
+  padding-left: 28px;
+  margin-top: 8px;
+}
+
+.entry-error {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 6px 0 0;
+  color: #a32d2d;
+  font-size: 11px;
+}
+
+.entry-error--group {
+  padding: 0 14px 10px;
+}
+
+.help-block {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 4px 18px 0;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.help-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.help-tag {
+  flex: none;
+  border-radius: 6px;
+  padding: 1px 8px;
+  color: var(--navy);
+  background: var(--navy-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.help-txt strong {
+  color: var(--ink);
+}
+
+.help-link {
+  margin-left: 4px;
+  color: var(--navy);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+/* ---- First-run setup guide ---- */
+.setup-guide__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 20px 22px;
+}
+
+.setup-step {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.setup-step.is-locked {
+  opacity: 0.72;
+  background: #fafbfc;
+}
+
+.setup-step__num {
+  display: flex;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--navy);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.setup-step.is-locked .setup-step__num {
+  background: #b9c2d2;
+}
+
+.setup-step__txt {
+  flex: 1;
+  min-width: 0;
+}
+
+.setup-step__txt strong {
+  font-size: 13px;
+}
+
+.setup-step__txt p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.setup-step__lock {
+  flex: none;
+  color: #8b95a3;
+  font-size: 12px;
+}
+
+/* ---- NAS verification ---- */
+.nas-verify {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 0 20px 20px;
+}
+
+.nas-verify__note {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.verify-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 20px 20px;
+  border: 1px solid;
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 13px;
+}
+
+.verify-result--success {
+  border-color: #bce3d0;
+  color: #0f6e56;
+  background: #e6f5ee;
+}
+
+.verify-result--error {
+  border-color: #e6b6b2;
+  color: #a32d2d;
+  background: #fff0ef;
+}
+
+.verify-result__icon {
+  font-weight: 800;
+}
+
+.verify-result p {
+  margin-top: 3px;
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+@media (max-width: 1100px) {
+  .entry-grid {
+    grid-template-columns: 28px 96px 88px 96px minmax(180px, 1fr) 120px minmax(140px, auto);
+  }
+
+  .row-view .addr-slot,
+  .cell-address {
+    width: 180px;
+  }
+}
+
+@media (max-width: 760px) {
+  .entry-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .row-view .addr-slot,
+  .cell-address,
+  .cell-name,
+  .cell-port,
+  .cell-route,
+  .cell-mode {
+    width: auto;
+  }
+
+  .cell-actions {
+    justify-content: flex-start;
   }
 }

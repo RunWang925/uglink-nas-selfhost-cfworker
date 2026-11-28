@@ -98,12 +98,12 @@ export function ConnectScreen({ bootstrap }: ConnectScreenProps) {
           <div>
             <p className="eyebrow">初始设置</p>
             <h1>选择<br />网关路线</h1>
-            <p className="connect-rail__lead">Cloudflare 网关与自建服务器网关可随时切换、互不干扰。先选择一条路线开始配置。</p>
+            <p className="connect-rail__lead">Cloudflare 与自建服务两条路线可分别配置、互不干扰。先选择一条路线开始配置。</p>
           </div>
           <ol className="setup-steps">
             <li className={route === 'cloudflare' ? 'is-current' : ''}>
               <span>1</span>
-              <div><strong>选择网关路线</strong><small>CF 云端 或 自建服务器</small></div>
+              <div><strong>选择网关路线</strong><small>Cloudflare 或 自建服务</small></div>
             </li>
             <li>
               <span>2</span>
@@ -125,7 +125,7 @@ export function ConnectScreen({ bootstrap }: ConnectScreenProps) {
             <div className="connect-card__heading">
               <p className="eyebrow">访问路线</p>
               <h2>你想使用哪种网关？</h2>
-              <p>两种路线都基于同一套 NAS 连接配置，随时可在「权限与安全」中切换。</p>
+              <p>两种路线都基于同一套 NAS 连接配置，可到「线路管理」分别调整。</p>
             </div>
 
             <div className="route-picker" role="radiogroup" aria-label="网关路线">
@@ -139,7 +139,7 @@ export function ConnectScreen({ bootstrap }: ConnectScreenProps) {
                 <span className="route-card__icon route-card__icon--cloud"><Cloud size={22} strokeWidth={1.9} /></span>
                 <span className="route-card__body">
                   <strong>Cloudflare 网关</strong>
-                  <small>借助 CF Worker 提供访问域名，可代理或票据跳转。</small>
+                  <small>借助 Cloudflare Worker 提供访问域名，支持代理模式或绿联跳转。</small>
                 </span>
                 <span className="route-card__check">{route === 'cloudflare' && <Check size={15} />}</span>
               </button>
@@ -152,7 +152,7 @@ export function ConnectScreen({ bootstrap }: ConnectScreenProps) {
               >
                 <span className="route-card__icon route-card__icon--server"><HardDrive size={22} strokeWidth={1.9} /></span>
                 <span className="route-card__body">
-                  <strong>自建服务器网关</strong>
+                  <strong>自建服务网关</strong>
                   <small>用自己的服务器端口直连，无需域名与 Cloudflare。</small>
                 </span>
                 <span className="route-card__check">{route === 'server' && <Check size={15} />}</span>

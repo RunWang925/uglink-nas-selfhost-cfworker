@@ -34,6 +34,16 @@ export class MemoryTtlCache implements SessionCache {
     this.entries.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
   }
 
+  async putIfAbsent(key: string, value: string, options?: { expirationTtl?: number }): Promise<boolean> {
+    // Check and write happen synchronously, so no other request can interleave
+    // between them in this single-process cache.
+    const ttlSeconds = options?.expirationTtl ?? 3600;
+    const existing = this.entries.get(key);
+    if (existing && existing.expiresAt > Date.now()) return false;
+    this.entries.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
+    return true;
+  }
+
   async delete(key: string): Promise<void> {
     this.entries.delete(key);
   }

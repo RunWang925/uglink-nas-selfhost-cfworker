@@ -73,6 +73,7 @@ export function useServerGateway(csrfToken: string) {
   const [message, setMessage] = useState<{ kind: 'ok' | 'bad'; text: string }>();
   const [pulled, setPulled] = useState(false);
   const baseline = useRef<string>(normalizeMappings([]));
+  const baselineRows = useRef<ServerMapping[]>([]);
   const autoPull = useRef(false);
 
   const persistConnection = useCallback((next: ServerConnection) => {
@@ -116,6 +117,7 @@ export function useServerGateway(csrfToken: string) {
     }));
     setMappings(rows);
     baseline.current = normalizeMappings(rows);
+    baselineRows.current = rows;
   }, []);
 
   const pull = useCallback(async (silent = false) => {
@@ -133,7 +135,7 @@ export function useServerGateway(csrfToken: string) {
     }
   }, [applyRemote, call]);
 
-  const push = useCallback(async () => {
+  const push = useCallback(async (): Promise<boolean> => {
     setBusy('push');
     setMessage(undefined);
     const config = {
@@ -144,12 +146,19 @@ export function useServerGateway(csrfToken: string) {
       applyRemote(data);
       setStatus((previous) => previous ? { ...previous, traffic: data.traffic } : previous);
       setMessage({ kind: 'ok', text: '已同步到服务器网关，配置即时生效。' });
+      return true;
     } catch (error) {
       setMessage({ kind: 'bad', text: `同步失败：${messageOf(error)}` });
+      return false;
     } finally {
       setBusy(undefined);
     }
   }, [applyRemote, call, mappings]);
+
+  const resetMappings = useCallback(() => {
+    setMappings(baselineRows.current);
+    setMessage(undefined);
+  }, []);
 
   const connected = Boolean(connection.baseUrl && connection.adminToken);
 
@@ -190,6 +199,7 @@ export function useServerGateway(csrfToken: string) {
     listeningByName,
     pull,
     push,
+    resetMappings,
     refreshStatus
   };
 }

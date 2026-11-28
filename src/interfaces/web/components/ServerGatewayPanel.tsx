@@ -19,21 +19,21 @@ export function RouteManagerPanel({ csrfToken, cfStatus, cfConnected, onConfigur
         <div>
           <p className="eyebrow">双路线连接</p>
           <h1>线路管理</h1>
-          <p>线路 A（Cloudflare）与线路 B（自建服务器）各自独立配置，可只配一条，也可以都配。服务的通道走哪条线，取决于该通道是否已配置。</p>
+          <p>Cloudflare 与自建服务两条路线各自独立配置，可只配一条，也可以都配。服务走哪条线，取决于该线路是否已配置。</p>
         </div>
       </div>
 
-      <div className="route-grid">
-        <section className="panel route-card route-card--cf">
-          <div className="unified-channel__head" style={{ marginBottom: 10 }}>
-            <span className="route-badge route-badge--cf"><Cloud size={13} /> 线路 A · Cloudflare</span>
+      <div className="route-manager-grid">
+        <section className="panel route-manager-card">
+          <div className="route-manager-card__head">
+            <span className="route-badge route-badge--cf"><Cloud size={13} /> Cloudflare</span>
+            <span className="route-manager-card__state">
+              <span className={`health-dot ${cfConnected ? 'health-dot--ok' : 'health-dot--pending'}`} />
+              {cfConnected ? '已连接' : '未配置'}
+            </span>
           </div>
-          <p className="muted">通过 Cloudflare Worker 提供域名访问（代理 / 票据）。配置 Account ID 与 API Token 后即可发布 A 通道服务。</p>
-          <div className="route-card__meta">
-            <span className={`health-dot ${cfConnected ? 'health-dot--ok' : 'health-dot--pending'}`} />
-            <strong>{cfConnected ? '已连接' : '未配置'}</strong>
-            {cfConnected && cfStatus.detail && <small className="muted">{cfStatus.detail}</small>}
-          </div>
+          <p className="muted">通过 Cloudflare Worker 提供域名访问（代理模式 / 绿联跳转）。配置 Account ID 与 API Token 后即可发布走此路线的服务。</p>
+          {cfConnected && cfStatus.detail && <p className="route-manager-card__detail">{cfStatus.detail}</p>}
           <div className="route-card__actions">
             <button className="button button--secondary" type="button" onClick={onConfigureCf}>
               <Route size={15} /> {cfConnected ? '查看 / 重新配置' : '去配置 Cloudflare'}
@@ -41,18 +41,18 @@ export function RouteManagerPanel({ csrfToken, cfStatus, cfConnected, onConfigur
           </div>
         </section>
 
-        <section className="panel route-card route-card--server">
-          <div className="unified-channel__head" style={{ marginBottom: 10 }}>
-            <span className="route-badge route-badge--server"><HardDrive size={13} /> 线路 B · 自建服务器</span>
+        <section className="panel route-manager-card">
+          <div className="route-manager-card__head">
+            <span className="route-badge route-badge--server"><HardDrive size={13} /> 自建服务</span>
+            <span className="route-manager-card__state">
+              <span className={`health-dot ${server.connected ? 'health-dot--ok' : 'health-dot--pending'}`} />
+              {server.connected ? '已连接' : '未配置'}
+            </span>
           </div>
-          <p className="muted">通过自己服务器上的网关 IP:端口直连访问。地址与令牌保存在本浏览器，不会上传。</p>
-          <div className="route-card__meta">
-            <span className={`health-dot ${server.connected ? 'health-dot--ok' : 'health-dot--pending'}`} />
-            <strong>{server.connected ? '已连接' : '未配置'}</strong>
-            {server.remote?.configured && server.remote.uglinkId && (
-              <small className="muted">UGREENlink ID · {server.remote.uglinkId}</small>
-            )}
-          </div>
+          <p className="muted">通过自己服务器上的网关 IP:端口直连访问（代理模式 / 绿联跳转）。地址与令牌保存在本浏览器，不会上传。</p>
+          {server.remote?.configured && server.remote.uglinkId && (
+            <p className="route-manager-card__detail">UGREENlink ID · {server.remote.uglinkId}</p>
+          )}
           <div className="route-card__fields">
             <label>服务器地址<input
               value={server.connection.baseUrl}
@@ -90,8 +90,8 @@ export function RouteManagerPanel({ csrfToken, cfStatus, cfConnected, onConfigur
       <section className="panel">
         <div className="panel__heading panel__heading--row">
           <div className="panel__heading-text">
-            <h2>线路 B 流量统计</h2>
-            <p>数据在服务器网关上统计，按月重置、重启不丢。A 线路流量由 Cloudflare 侧承担，不经过你的服务器。</p>
+            <h2>自建服务流量统计</h2>
+            <p>数据在服务器网关上统计，按月重置、重启不丢。Cloudflare 路线的流量由 Cloudflare 承担，不经过你的服务器。</p>
           </div>
         </div>
         {traffic ? (
@@ -107,7 +107,9 @@ export function RouteManagerPanel({ csrfToken, cfStatus, cfConnected, onConfigur
               </p>
             )}
             <table className="service-table" role="table" aria-label="服务器流量统计">
-              <thead><tr className="service-table__head"><span>服务</span><span>本月接收</span><span>本月发出</span><span>合计</span></tr></thead>
+              <thead>
+                <tr className="service-table__head"><th scope="col">服务</th><th scope="col">本月接收</th><th scope="col">本月发出</th><th scope="col">合计</th></tr>
+              </thead>
               <tbody>
                 {(traffic.monthlyServices ?? []).length === 0 && (
                   <tr className="empty-row"><td colSpan={4}>暂无流量记录。</td></tr>
@@ -121,7 +123,7 @@ export function RouteManagerPanel({ csrfToken, cfStatus, cfConnected, onConfigur
             </table>
           </>
         ) : (
-          <p className="muted">配置线路 B 的服务器地址与访问令牌后即可查看流量统计。</p>
+          <p className="muted">配置自建服务的服务器地址与访问令牌后即可查看流量统计。</p>
         )}
       </section>
     </div>
