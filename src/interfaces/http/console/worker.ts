@@ -39,6 +39,11 @@ import { createKvDiagnosticLogRepository } from '../../../infrastructure/persist
 import { createKvConfigurationRepository } from '../../../infrastructure/persistence/kv-configuration-repository';
 import { portableBackupCipher } from '../../../infrastructure/security/portable-backup';
 import { randomToken } from '../../../infrastructure/security/session-crypto';
+import {
+  getAuthState,
+  setConsolePassword,
+  verifyConsolePassword
+} from '../../../infrastructure/security/console-auth';
 import { redactDeployment, redactDiagnostic, redactHealth } from '../../../domain/logging/redact-records';
 import { apiError, assertSameOrigin, json, readJson } from '../http';
 import type { ConsoleWorkerEnv } from './environment';
@@ -105,22 +110,28 @@ function connectionProvider(env: ConsoleWorkerEnv) {
 }
 
 async function bootstrap(env: ConsoleWorkerEnv, session: SessionHandle): Promise<BootstrapResponse> {
-  const connection = session.data.cloudflare;
-  const target = session.data.target;
+  const { state: authState } = await getAuthState(env, session.data);
+  // Before a password is configured (needs_setup) the console is open, so it
+  // behaves as unlocked. Only a set-but-not-unlocked session is gated.
+  const unlocked = authState !== 'locked';
+  // While the console is locked, never leak the stored Cloudflare target,
+  // configuration, or pending service list.
+  const connection = unlocked ? session.data.cloudflare : undefined;
+  const target = unlocked ? session.data.target : undefined;
   const cloudflareReady = Boolean(connection && target);
   // Sessions created before access routes existed may lack accessMode. Infer
   // the route so returning users keep their previous behaviour.
   const accessMode = session.data.accessMode
     ?? (cloudflareReady ? 'cloudflare' : 'setup');
-  const authenticated = accessMode === 'server'
+  const authenticated = unlocked && (accessMode === 'server'
     ? true
-    : accessMode === 'cloudflare' && cloudflareReady;
+    : accessMode === 'cloudflare' && cloudflareReady);
   const cloudflare = providerStatus(
     Boolean(connection),
     connection?.account.name,
     target ? `服务 · ${target.workerName}` : undefined
   );
-  const configuration = target
+  const configuration = unlocked && target
     ? await createConfigurationService(
       createKvConfigurationRepository(env.CONSOLE_SESSIONS, target)
     ).read()
@@ -129,14 +140,15 @@ async function bootstrap(env: ConsoleWorkerEnv, session: SessionHandle): Promise
     title: env.CONSOLE_TITLE || 'UGLINK Control',
     authenticated,
     accessMode,
+    authState,
     csrfToken: session.data.csrfToken,
     providers: { cloudflare },
-    ...(session.data.pendingCloudConfiguration ? {
+    ...(unlocked && session.data.pendingCloudConfiguration ? {
       cloudConfiguration: {
         serviceCount: session.data.pendingCloudConfiguration.services.length
       }
     } : {}),
-    ...(target && configuration ? {
+    ...(unlocked && target && configuration ? {
       target: {
         ...target,
         accountIdSuffix: target.accountId.slice(-6)
@@ -181,10 +193,62 @@ async function connect(
   return bootstrap(env, session);
 }
 
+const AUTH_ENDPOINTS = new Set(['/api/auth/setup', '/api/auth/login', '/api/auth/logout']);
+
 async function route(request: Request, env: ConsoleWorkerEnv, session: SessionHandle, context: ExternalRequestContext): Promise<Response> {
   const { pathname } = new URL(request.url);
+
+  // ---- Access password endpoints (available regardless of lock state) ----
+  if (request.method === 'POST' && pathname === '/api/auth/setup') {
+    assertSameOrigin(request, context.externalOrigin);
+    assertCsrf(request, session);
+    const { state } = await getAuthState(env, session.data);
+    if (state !== 'needs_setup') {
+      throw new ApplicationError(409, 'auth_already_set', '访问密码已设置，无需重复设置。');
+    }
+    const body = await readJson<{ password?: string }>(request, 4_096);
+    await setConsolePassword(env, body.password ?? '');
+    session.data.authValidAt = Date.now();
+    await saveSession(env, session);
+    return json(await bootstrap(env, session));
+  }
+
+  if (request.method === 'POST' && pathname === '/api/auth/login') {
+    assertSameOrigin(request, context.externalOrigin);
+    assertCsrf(request, session);
+    const { state } = await getAuthState(env, session.data);
+    if (state === 'needs_setup') {
+      throw new ApplicationError(409, 'auth_not_set', '尚未设置访问密码。');
+    }
+    const body = await readJson<{ password?: string }>(request, 4_096);
+    if (!await verifyConsolePassword(env, body.password ?? '')) {
+      throw new ApplicationError(401, 'invalid_password', '访问密码错误，请重试。');
+    }
+    session.data.authValidAt = Date.now();
+    await saveSession(env, session);
+    return json(await bootstrap(env, session));
+  }
+
+  if (request.method === 'POST' && pathname === '/api/auth/logout') {
+    assertSameOrigin(request, context.externalOrigin);
+    assertCsrf(request, session);
+    delete session.data.authValidAt;
+    await saveSession(env, session);
+    return json({ status: 'ok' });
+  }
+
   if (request.method === 'GET' && pathname === '/api/bootstrap') {
     return json(await bootstrap(env, session));
+  }
+
+  // ---- Gate: once a password is set, every other API requires an unlocked
+  // session. Before setup (needs_setup) everything stays open so the user can
+  // complete first-time configuration and set the password. ----
+  if (!AUTH_ENDPOINTS.has(pathname)) {
+    const { state } = await getAuthState(env, session.data);
+    if (state === 'locked') {
+      throw new ApplicationError(401, 'console_locked', '控制台已锁定，请先输入访问密码。');
+    }
   }
 
   if (request.method === 'POST' && pathname === '/api/connections/cloudflare') {

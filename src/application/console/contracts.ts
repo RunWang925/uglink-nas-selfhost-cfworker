@@ -18,6 +18,8 @@ export interface BootstrapResponse {
   authenticated: boolean;
   /** Active access route: 'cloudflare' (CF Worker), 'server' (self-hosted gateway), or 'setup' (not chosen yet). */
   accessMode: 'cloudflare' | 'server' | 'setup';
+  /** Console access-password state: 'needs_setup' (no password yet), 'locked' (password set, session not unlocked), 'unlocked'. */
+  authState: 'needs_setup' | 'locked' | 'unlocked';
   csrfToken: string;
   providers: {
     cloudflare: ProviderStatus;

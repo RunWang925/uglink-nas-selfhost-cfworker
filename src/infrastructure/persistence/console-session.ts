@@ -19,6 +19,8 @@ export interface SessionData {
   externalOrigin?: string;
   /** Selected access route. Absent on a fresh session until the user picks a route. */
   accessMode?: AccessMode;
+  /** Epoch ms when this session last passed the console access password. */
+  authValidAt?: number;
   cloudflare?: CloudflareConnection;
   target?: WorkerTarget;
   pendingCloudConfiguration?: UglinkConfig;

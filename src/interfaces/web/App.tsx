@@ -5,6 +5,7 @@ import type { BootstrapResponse } from '../../application/console/contracts';
 import { Brand } from './components/Brand';
 import { ConnectScreen } from './components/ConnectScreen';
 import { Dashboard } from './components/Dashboard';
+import { AuthGate } from './components/AuthGate';
 
 export default function App() {
   const [bootstrap, setBootstrap] = useState<BootstrapResponse>();
@@ -35,6 +36,12 @@ export default function App() {
 
   if (!bootstrap) {
     return <div className="boot-screen"><Brand /><div className="boot-loading"><LoaderCircle className="spin" size={22} /> 正在建立安全会话…</div></div>;
+  }
+
+  // Access password gate: first-time setup or login stands in front of the
+  // entire console, in both route modes.
+  if (bootstrap.authState === 'needs_setup' || bootstrap.authState === 'locked') {
+    return <AuthGate bootstrap={bootstrap} onUnlocked={setBootstrap} />;
   }
 
   if (!bootstrap.authenticated) {

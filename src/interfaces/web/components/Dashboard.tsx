@@ -630,6 +630,14 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
     }
   };
 
+  const lockConsole = async () => {
+    try {
+      await apiPost<{ status: string }>('/api/auth/logout', bootstrap.csrfToken);
+    } catch {
+      // Even if the request fails, reloading re-reads auth state from server.
+    }
+  };
+
   const resetConnection = async () => {
     setResettingConnection(true);
     setNotice(undefined);
@@ -733,6 +741,14 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
               ? <><div><span className="health-dot health-dot--ok" /><strong>{target.workerName}</strong></div><small>Account ID ···{target.accountIdSuffix}</small></>
               : <><div><span className="health-dot health-dot--ok" /><strong>自建服务网关</strong></div><small>IP:端口直连 · 无需域名</small></>}
           </div>
+          <button
+            className="sidebar-lock"
+            type="button"
+            title="锁定控制台（下次打开需重新输入访问密码）"
+            onClick={() => void lockConsole().then(() => window.location.reload())}
+          >
+            <LockKeyhole size={14} /> 锁定控制台
+          </button>
         </aside>
 
         <main className="app-main">

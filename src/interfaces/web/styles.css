@@ -4755,3 +4755,129 @@ a.addr-chip:hover {
     justify-content: flex-start;
   }
 }
+
+/* ---- Access password gate (first-time setup / login) ---- */
+.auth-screen {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 32px 20px;
+  background: var(--surface);
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px;
+  background: #ffffff;
+  box-shadow: 0 18px 50px rgba(11, 23, 51, 0.08);
+}
+
+.auth-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  color: var(--orange-dark);
+  background: var(--orange-soft);
+  margin-bottom: 16px;
+}
+
+.auth-card h1 {
+  margin: 0 0 8px;
+  font-size: 21px;
+  color: var(--ink);
+}
+
+.auth-card__intro {
+  margin: 0 0 24px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+
+.auth-card__label {
+  display: block;
+  margin: 16px 0 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.auth-card .password-field {
+  margin-top: 0;
+}
+
+.auth-card__hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.auth-card__hint--warn {
+  color: var(--warning);
+}
+
+.auth-card__error {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  border-radius: 7px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.auth-card__submit {
+  width: 100%;
+  margin-top: 24px;
+  justify-content: center;
+}
+
+.auth-card__footnote {
+  margin: 20px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+
+.auth-card__footnote code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-blue);
+  color: var(--navy);
+  font-size: 10px;
+}
+
+.sidebar-lock {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin-top: 4px;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--muted);
+  background: transparent;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-lock:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}

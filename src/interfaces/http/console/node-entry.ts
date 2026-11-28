@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { SqliteConsoleStore } from '../../../infrastructure/persistence/sqlite-console-store';
+import { setConsolePassword } from '../../../infrastructure/security/console-auth';
 import { createConsoleServer } from './node-server';
 import { parseServerConfig } from './server-config';
 import { NodeProcessLogStore, captureProcessOutput } from '../../../infrastructure/logging/node-process-logs';
@@ -62,6 +63,15 @@ async function main(): Promise<void> {
     const count = store.migrateLegacy(join(directory, 'wrangler'));
     if (count) console.log(`[启动] 已迁移 ${count} 条本地记录，旧数据保留不变。`);
     store.pruneExpired();
+    // Optional deployment-time password. Overwrites any stored password on
+    // every start, so it doubles as a recovery path: set it in compose,
+    // restart, then remove it once you've signed in and set a new one.
+    const envPassword = process.env.UGLINK_CONSOLE_PASSWORD;
+    if (envPassword) {
+      if (envPassword.length < 6) throw new Error('UGLINK_CONSOLE_PASSWORD 至少需要 6 个字符。');
+      await setConsolePassword({ CONSOLE_SESSIONS: store, SESSION_ENCRYPTION_KEY: key }, envPassword);
+      console.log('[启动] 已从 UGLINK_CONSOLE_PASSWORD 设置控制台访问密码（覆盖已存密码）。');
+    }
     const server = createConsoleServer({
       CONSOLE_SESSIONS: store,
       SESSION_ENCRYPTION_KEY: key,
