@@ -4250,6 +4250,10 @@ select:focus {
   padding-bottom: 12px;
 }
 
+.svc-box__rows {
+  overflow-x: auto;
+}
+
 .entry-row + .entry-row {
   border-top: 1px dashed var(--border);
   padding-top: 12px;
@@ -4257,7 +4261,7 @@ select:focus {
 
 .entry-grid {
   display: grid;
-  grid-template-columns: 28px 100px 88px 96px 220px 132px minmax(150px, auto);
+  grid-template-columns: 28px minmax(84px, 120px) 88px 96px minmax(170px, 1fr) 124px minmax(160px, auto);
   align-items: end;
   gap: 10px;
 }
@@ -4314,7 +4318,7 @@ select:focus {
 
 .addr-slot {
   display: flex;
-  width: 220px;
+  width: 100%;
   min-width: 0;
   align-items: center;
   overflow: hidden;
@@ -4352,7 +4356,9 @@ a.addr-chip:hover {
 
 .mode-chip {
   display: inline-flex;
-  width: 132px;
+  width: 100%;
+  max-width: 132px;
+  min-width: 0;
   min-height: 28px;
   align-items: center;
   justify-content: center;
@@ -4416,7 +4422,7 @@ a.addr-chip:hover {
 }
 
 .cell-address {
-  width: 220px;
+  width: 100%;
   min-width: 0;
 }
 
@@ -4451,7 +4457,8 @@ a.addr-chip:hover {
 }
 
 .cell-mode {
-  width: 132px;
+  width: 100%;
+  min-width: 0;
 }
 
 .entry-select {
@@ -4671,14 +4678,21 @@ a.addr-chip:hover {
   line-height: 1.6;
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1280px) {
   .entry-grid {
-    grid-template-columns: 28px 96px 88px 96px minmax(180px, 1fr) 120px minmax(140px, auto);
+    gap: 8px;
+    grid-template-columns: 28px minmax(76px, 1fr) 84px 92px minmax(150px, 1.3fr) 112px minmax(140px, auto);
   }
 
-  .row-view .addr-slot,
-  .cell-address {
-    width: 180px;
+  .port-chip,
+  .entry-grid .route-badge,
+  .mode-chip {
+    width: 100%;
+    max-width: none;
+  }
+
+  .mode-chip {
+    font-size: 10.5px;
   }
 }
 
