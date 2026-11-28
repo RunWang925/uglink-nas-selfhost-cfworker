@@ -14,7 +14,7 @@ export function RouteManagerPanel({ csrfToken, cfStatus, cfConnected, onConfigur
   const traffic = server.status?.traffic;
 
   return (
-    <div className="section-page">
+    <div className="section-page section-page--route">
       <div className="page-heading">
         <div>
           <p className="eyebrow">双路线连接</p>
@@ -106,21 +106,23 @@ export function RouteManagerPanel({ csrfToken, cfStatus, cfConnected, onConfigur
                 本月流量已超过预警阈值（{formatBytes(traffic.thresholdBytes ?? 0)}）。
               </p>
             )}
-            <table className="service-table" role="table" aria-label="服务器流量统计">
-              <thead>
-                <tr className="service-table__head"><th scope="col">服务</th><th scope="col">本月接收</th><th scope="col">本月发出</th><th scope="col">合计</th></tr>
-              </thead>
-              <tbody>
-                {(traffic.monthlyServices ?? []).length === 0 && (
-                  <tr className="empty-row"><td colSpan={4}>暂无流量记录。</td></tr>
-                )}
-                {(traffic.monthlyServices ?? []).map((item) => (
-                  <tr key={item.service}>
-                    <td>{item.service}</td><td>{formatBytes(item.rx)}</td><td>{formatBytes(item.tx)}</td><td>{formatBytes(item.rx + item.tx)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="table-scroll">
+              <table className="traffic-table" role="table" aria-label="服务器流量统计">
+                <thead>
+                  <tr><th scope="col">服务</th><th scope="col">本月接收</th><th scope="col">本月发出</th><th scope="col">合计</th></tr>
+                </thead>
+                <tbody>
+                  {(traffic.monthlyServices ?? []).length === 0 && (
+                    <tr className="empty-row"><td colSpan={4}>暂无流量记录。</td></tr>
+                  )}
+                  {(traffic.monthlyServices ?? []).map((item) => (
+                    <tr key={item.service}>
+                      <td>{item.service}</td><td>{formatBytes(item.rx)}</td><td>{formatBytes(item.tx)}</td><td>{formatBytes(item.rx + item.tx)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </>
         ) : (
           <p className="muted">配置自建服务的服务器地址与访问令牌后即可查看流量统计。</p>

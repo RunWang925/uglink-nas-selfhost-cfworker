@@ -430,6 +430,8 @@ export function UnifiedServiceList({
   const [draftName, setDraftName] = useState('');
   const [draftPort, setDraftPort] = useState('');
   const [draftRoute, setDraftRoute] = useState<'cf' | 'server'>(cfEnabled ? 'cf' : 'server');
+  const serverRouteAvailable = server.connected;
+  const anyRouteAvailable = cfEnabled || serverRouteAvailable;
   const [draftDomain, setDraftDomain] = useState('');
   const [draftServerPort, setDraftServerPort] = useState('');
   const [draftCustomDomain, setDraftCustomDomain] = useState('');
@@ -445,6 +447,16 @@ export function UnifiedServiceList({
       // Browser storage may be unavailable; the UI keeps working in memory.
     }
   }, [customDomains]);
+
+  // Keep the draft route selectable-only: when a route becomes unavailable
+  // (e.g. self-hosted connection cleared), fall back to the other route.
+  useEffect(() => {
+    setDraftRoute((current) => {
+      if (current === 'cf' && !cfEnabled) return serverRouteAvailable ? 'server' : 'cf';
+      if (current === 'server' && !serverRouteAvailable) return 'cf';
+      return current;
+    });
+  }, [cfEnabled, serverRouteAvailable]);
 
   const issues = useMemo(() => validateUnifiedServices(config, server.mappings), [config, server.mappings]);
   const groups = useMemo(() => buildGroups(config, server.mappings), [config, server.mappings]);
@@ -571,11 +583,19 @@ export function UnifiedServiceList({
     setDraftServerPort('');
     setDraftCustomDomain('');
     setDraftMode('proxy');
-    setDraftRoute(cfEnabled ? 'cf' : 'server');
+    setDraftRoute(cfEnabled ? 'cf' : serverRouteAvailable ? 'server' : 'cf');
     setDraftError(undefined);
   };
 
   const finishDraft = () => {
+    if (draftRoute === 'cf' && !cfEnabled) {
+      setDraftError('Cloudflare 路线未配置，请先到「线路管理」配置 Account ID 与 API Token。');
+      return;
+    }
+    if (draftRoute === 'server' && !serverRouteAvailable) {
+      setDraftError('自建服务路线未配置，请先到「线路管理」填好服务器地址与访问令牌。');
+      return;
+    }
     const name = draftName.trim();
     const port = draftPort.replace(/\D/g, '');
     if (!name || !port) {
@@ -827,7 +847,8 @@ export function UnifiedServiceList({
             <button
               className="button button--secondary button--compact"
               type="button"
-              disabled={adding}
+              disabled={adding || !anyRouteAvailable}
+              title={anyRouteAvailable ? undefined : '请先在「线路管理」页配置 Cloudflare 或自建服务路线'}
               onClick={() => setAdding(true)}
             >
               <Plus size={15} /> 添加记录
@@ -881,7 +902,7 @@ export function UnifiedServiceList({
                         onChange={(event) => setDraftRoute(event.target.value as 'cf' | 'server')}
                       >
                         {cfEnabled && <option value="cf">Cloudflare</option>}
-                        <option value="server">自建服务</option>
+                        {serverRouteAvailable && <option value="server">自建服务</option>}
                       </select>
                     </label>
                     {draftRoute === 'cf' ? (
