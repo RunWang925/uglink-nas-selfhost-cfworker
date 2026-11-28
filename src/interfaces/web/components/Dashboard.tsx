@@ -228,7 +228,7 @@ function NasConnectionPanel({
   );
 }
 
-function SetupGuide({ onConfigureRoute, onConnectNas }: { onConfigureRoute: () => void; onConnectNas: () => void }) {
+function SetupGuide({ serverMode, onConfigureRoute, onConnectNas }: { serverMode: boolean; onConfigureRoute: () => void; onConnectNas: () => void }) {
   return (
     <section className="panel setup-guide">
       <div className="panel__heading">
@@ -247,14 +247,25 @@ function SetupGuide({ onConfigureRoute, onConnectNas }: { onConfigureRoute: () =
           </div>
           <button className="button button--secondary button--compact" type="button" onClick={onConfigureRoute}>前往「线路管理」</button>
         </div>
-        <div className="setup-step">
-          <span className="setup-step__num">2</span>
-          <div className="setup-step__txt">
-            <strong>连接绿联 NAS</strong>
-            <p>填写 UGREENlink ID 与登录账号，可用「验证连接」确认凭据有效。此步只连绿联官方接口，不依赖第 1 步。</p>
+        {serverMode ? (
+          <div className="setup-step">
+            <span className="setup-step__num">2</span>
+            <div className="setup-step__txt">
+              <strong>在服务器网关连接绿联 NAS</strong>
+              <p>自建模式下绿联凭据保存在服务器网关上：在线路管理的网关卡片填好地址与令牌，网关会自动带回 UGREENlink ID。绿联登录有短信/扫码风控时需要本人确认一次。</p>
+            </div>
+            <button className="button button--secondary button--compact" type="button" onClick={onConfigureRoute}>前往「线路管理」</button>
           </div>
-          <button className="button button--secondary button--compact" type="button" onClick={onConnectNas}>前往「NAS 连接」</button>
-        </div>
+        ) : (
+          <div className="setup-step">
+            <span className="setup-step__num">2</span>
+            <div className="setup-step__txt">
+              <strong>连接绿联 NAS</strong>
+              <p>填写 UGREENlink ID 与登录账号，可用「验证连接」确认凭据有效。此步只连绿联官方接口，不依赖第 1 步。</p>
+            </div>
+            <button className="button button--secondary button--compact" type="button" onClick={onConnectNas}>前往「NAS 连接」</button>
+          </div>
+        )}
         <div className="setup-step is-locked">
           <span className="setup-step__num">3</span>
           <div className="setup-step__txt">
@@ -276,14 +287,92 @@ interface SecurityPageProps {
   onRestored: (bootstrap: BootstrapResponse) => void;
 }
 
+function ConsolePasswordCard({ bootstrap }: { bootstrap: BootstrapResponse }) {
+  const needsSetup = bootstrap.authState === 'needs_setup';
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const [done, setDone] = useState(false);
+  const mismatch = Boolean(confirm) && next !== confirm;
+  const canSubmit = !busy && next.length >= 6 && (needsSetup || Boolean(current)) && !mismatch;
+
+  const submit = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await apiPost('/api/auth/change-password', bootstrap.csrfToken, {
+        currentPassword: current,
+        newPassword: next
+      });
+      setDone(true);
+      setCurrent('');
+      setNext('');
+      setConfirm('');
+      window.setTimeout(() => setDone(false), 4000);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="panel security-card">
+      <span className="security-card__icon security-card__icon--orange"><LockKeyhole size={21} /></span>
+      <div>
+        <h2>控制台访问密码</h2>
+        <p>{needsSetup
+          ? '还没有设置访问密码。设置后，其他浏览器或陌生访客打开控制台都需要先输入密码。'
+          : <>已开启访问保护。修改密码后，其他已登录的浏览器会自动失效，需要重新输入。</>}</p>
+      </div>
+      <div className="route-card__fields">
+        {!needsSetup && (
+          <label>当前密码<input
+            type="password"
+            autoComplete="current-password"
+            value={current}
+            onChange={(event) => setCurrent(event.target.value)}
+          /></label>
+        )}
+        <label>{needsSetup ? '设置新密码（至少 6 位）' : '新密码（至少 6 位）'}<input
+          type="password"
+          autoComplete="new-password"
+          value={next}
+          onChange={(event) => setNext(event.target.value)}
+        /></label>
+        <label>确认新密码<input
+          type="password"
+          autoComplete="new-password"
+          value={confirm}
+          onChange={(event) => setConfirm(event.target.value)}
+        /></label>
+        {mismatch && <p className="form-error">两次输入的新密码不一致。</p>}
+        {error && <p className="form-error">{error}</p>}
+        {done && <p className="muted" style={{ color: '#0f6e56' }}>访问密码已更新，当前会话保持登录。</p>}
+      </div>
+      <div className="security-card__actions">
+        <button className="button button--secondary" type="button" disabled={!canSubmit} onClick={() => void submit()}>
+          {busy ? <LoaderCircle className="spin" size={15} /> : <LockKeyhole size={15} />} {needsSetup ? '设置访问密码' : '修改访问密码'}
+        </button>
+      </div>
+      <p className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+        忘记密码时，可在部署配置的 environment 中加入 <code>UGLINK_CONSOLE_PASSWORD=新密码</code> 重建容器即可重置。
+      </p>
+    </section>
+  );
+}
+
 function SecurityPage({ bootstrap, config, resetting, onReset, onRestored }: SecurityPageProps) {
   const cfConnected = bootstrap.providers.cloudflare.state === 'connected';
   return (
     <div className="section-page">
       <div className="page-heading">
-        <div><p className="eyebrow">凭据与数据</p><h1>权限与安全</h1><p>管理 Cloudflare 凭据与本地配置的加密备份。</p></div>
+        <div><p className="eyebrow">凭据与数据</p><h1>权限与安全</h1><p>管理控制台访问密码、Cloudflare 凭据与本地配置的加密备份。</p></div>
       </div>
       <div className="security-grid">
+        <ConsolePasswordCard bootstrap={bootstrap} />
         <section className="panel security-card">
           <span className="security-card__icon security-card__icon--orange"><Cloud size={21} /></span>
           <div>
@@ -692,12 +781,12 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
     { id: 'diagnostics', icon: TriangleAlert },
     { id: 'security', icon: ShieldCheck }
   ];
-  // In server-only mode hide the Cloudflare-dependent panels so a self-hosted
-  // user never sees empty/broken CF screens. The unified service list, route
-  // management and security always remain.
-  const navItems = isServerMode
-    ? allNavItems.filter((item) => item.id === 'access' || item.id === 'server' || item.id === 'security')
-    : allNavItems;
+  // Hide Cloudflare-dependent panels only when CF is truly absent, so a
+  // dual-route user (server selected but CF configured) can still manage the
+  // NAS credentials their Cloudflare ticket services rely on.
+  const navItems = target
+    ? allNavItems
+    : allNavItems.filter((item) => item.id === 'access' || item.id === 'server' || item.id === 'security');
   const currentErrorCount = (publishedHealth?.services.filter((service) => !service.healthy).length || 0)
     + (healthCheckError ? 1 : 0);
 
@@ -766,6 +855,7 @@ export function Dashboard({ bootstrap, onConnectionReset }: DashboardProps) {
               </div>
               {showSetupGuide ? (
                 <SetupGuide
+                  serverMode={isServerMode && !target}
                   onConfigureRoute={() => setSection('server')}
                   onConnectNas={() => setSection('services')}
                 />

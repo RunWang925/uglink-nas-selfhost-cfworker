@@ -237,6 +237,28 @@ async function route(request: Request, env: ConsoleWorkerEnv, session: SessionHa
     return json({ status: 'ok' });
   }
 
+  if (request.method === 'POST' && pathname === '/api/auth/change-password') {
+    assertSameOrigin(request, context.externalOrigin);
+    assertCsrf(request, session);
+    const body = await readJson<{ currentPassword?: string; newPassword?: string }>(request, 2_048);
+    const current = body.currentPassword ?? '';
+    const next = body.newPassword ?? '';
+    if (!current || !next) {
+      throw new ApplicationError(400, 'missing_password', '请填写当前密码和新密码。');
+    }
+    if (next.length < 6) {
+      throw new ApplicationError(422, 'password_too_short', '新密码至少需要 6 个字符。');
+    }
+    if (!(await verifyConsolePassword(env, current))) {
+      throw new ApplicationError(401, 'invalid_password', '当前密码不正确。');
+    }
+    const record = await setConsolePassword(env, next);
+    // Keep this session unlocked; every other session is now stale.
+    session.data.authValidAt = record.changedAt;
+    await saveSession(env, session);
+    return json(await bootstrap(env, session));
+  }
+
   if (request.method === 'GET' && pathname === '/api/bootstrap') {
     return json(await bootstrap(env, session));
   }

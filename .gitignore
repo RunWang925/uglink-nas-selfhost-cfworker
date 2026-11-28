@@ -17,3 +17,13 @@ node-gateway-data/
 .local-test/
 .idea/
 *CLAUDE.md
+# Local ops helpers with embedded credentials / tokens — never commit.
+qa-shots/
+ticket-test.*
+ticket-post.html
+scripts/nas-*.py
+scripts/nas_lib.py
+scripts/server-*.py
+scripts/server_lib.py
+scripts/local-forward.py
+scripts/qa-nas-console*.mjs
