@@ -27,3 +27,4 @@ scripts/server-*.py
 scripts/server_lib.py
 scripts/local-forward.py
 scripts/qa-nas-console*.mjs
+scripts/qa-nas-final.mjs
